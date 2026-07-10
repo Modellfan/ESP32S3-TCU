@@ -1,0 +1,16 @@
+.pio/
+__pycache__/
+*.pyc
+
+# Local/private hardware configuration
+src/LocalConfig.h
+
+# Local reference material and generated proof logs
+Inputs/
+logs/
+
+# Editor/OS noise
+.vscode/
+.idea/
+*.log
+Thumbs.db
