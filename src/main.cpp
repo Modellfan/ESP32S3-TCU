@@ -1,10 +1,13 @@
 #include <Arduino.h>
 
 #include <ArduinoOTA.h>
+#include <PubSubClient.h>
 #include <WiFi.h>
 #include <ctype.h>
 #include <math.h>
+#include <string.h>
 
+#include "GitHubOtaDemo.h"
 #include "GpsBufferedService.h"
 #include "TCallA7670Modem.h"
 
@@ -13,15 +16,30 @@ namespace {
 constexpr const char* WIFI_SSID = TCALL_WIFI_SSID;
 constexpr const char* WIFI_PASSWORD = TCALL_WIFI_PASSWORD;
 constexpr const char* OTA_HOSTNAME = TCALL_OTA_HOSTNAME;
+constexpr const char* MQTT_HOST = TCALL_MQTT_HOST;
+constexpr const char* MQTT_TRANSPORT = TCALL_MQTT_TRANSPORT;
+constexpr uint16_t MQTT_PORT = TCALL_MQTT_PORT;
+constexpr const char* MQTT_USER = TCALL_MQTT_USER;
+constexpr const char* MQTT_PASS = TCALL_MQTT_PASS;
+constexpr const char* MQTT_CLIENT_ID = TCALL_MQTT_CLIENT_ID;
+constexpr const char* MQTT_TOPIC_PREFIX = TCALL_MQTT_TOPIC_PREFIX;
+constexpr uint32_t MQTT_PUBLISH_INTERVAL_MS = TCALL_MQTT_PUBLISH_INTERVAL_MS;
+constexpr bool GPS_AUTOSTART = TCALL_GPS_AUTOSTART != 0;
 constexpr uint16_t WIFI_CONSOLE_PORT = 23;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
+constexpr uint32_t MQTT_RECONNECT_INTERVAL_MS = 10000;
 
 tcall::TCallA7670Modem modemService;
+tcall::GitHubOtaDemo githubOta(modemService);
 tcall::GpsBufferedService gpsBuffer(modemService);
 WiFiServer wifiConsoleServer(WIFI_CONSOLE_PORT);
 WiFiClient wifiConsoleClient;
+WiFiClient mqttNetClient;
+PubSubClient mqttClient(mqttNetClient);
 String serialCommandLine;
 String wifiCommandLine;
+uint32_t nextMqttConnectMs = 0;
+uint32_t nextMqttPublishMs = 0;
 
 constexpr tcall::ApnProfile GSM_APN_PROFILES[] = {
     {"configured_default", tcall::DEFAULT_APN, tcall::DEFAULT_APN_USER,
@@ -42,6 +60,8 @@ void printHelp(Stream& out)
   out.println("  operator auto|telekom|status");
   out.println("  rat auto|lte");
   out.println("  data up|down|status");
+  out.println("  mqtt status|publish");
+  out.println("  ota config|latest|update");
   out.println("  gsm prove [timeout_seconds] [host] [path]");
   out.println("  gsm reset");
   out.println("  http <host> [path]");
@@ -127,6 +147,215 @@ void printBufferedGps(Stream& out)
     out.print("Cache age ms: ");
     out.println(millis() - info.updatedMs);
   }
+}
+
+bool mqttConfigured()
+{
+  return strlen(MQTT_HOST) > 0;
+}
+
+bool mqttUseCellular()
+{
+  return strcmp(MQTT_TRANSPORT, "cellular") == 0 || strcmp(MQTT_TRANSPORT, "lte") == 0 ||
+         strcmp(MQTT_TRANSPORT, "gsm") == 0;
+}
+
+bool ensureCellularData(Stream& out)
+{
+  if (modemService.dataActive()) {
+    out.print("Cellular data already active. Local IP: ");
+    out.println(modemService.localIP());
+    return true;
+  }
+
+  out.println("Cellular data is down; bringing LTE data up.");
+  if (!modemService.waitForSimReady(30000, out)) {
+    return false;
+  }
+  modemService.configureRat(true, out);
+  if (!modemService.waitForEpsRegistration(120000, out)) {
+    return false;
+  }
+  if (!modemService.activateData(tcall::DEFAULT_APN, tcall::DEFAULT_APN_USER,
+                                 tcall::DEFAULT_APN_PASS, &out)) {
+    out.println("Cellular data activation failed.");
+    return false;
+  }
+
+  out.print("Cellular data active. Local IP: ");
+  out.println(modemService.localIP());
+  return true;
+}
+
+String mqttTopic(const char* suffix)
+{
+  String topic = MQTT_TOPIC_PREFIX;
+  if (!topic.endsWith("/")) {
+    topic += '/';
+  }
+  topic += suffix;
+  return topic;
+}
+
+bool mqttEnsureConnected(Stream* out = nullptr)
+{
+  if (!mqttConfigured()) {
+    if (out) {
+      (*out).println("MQTT disabled: TCALL_MQTT_HOST is empty.");
+    }
+    return false;
+  }
+  if (mqttUseCellular()) {
+    mqttClient.setClient(modemService.cellularClient());
+    if (!modemService.dataActive()) {
+      if (out) {
+        (*out).println("MQTT unavailable: cellular data is down. Run `data up` first.");
+      }
+      return false;
+    }
+  } else {
+    mqttClient.setClient(mqttNetClient);
+  }
+
+  if (!mqttUseCellular() && WiFi.status() != WL_CONNECTED) {
+    if (out) {
+      (*out).println("MQTT unavailable: WiFi is disconnected.");
+    }
+    return false;
+  }
+  if (mqttClient.connected()) {
+    return true;
+  }
+
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+  bool connected = false;
+  if (strlen(MQTT_USER) > 0 || strlen(MQTT_PASS) > 0) {
+    connected = mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS);
+  } else {
+    connected = mqttClient.connect(MQTT_CLIENT_ID);
+  }
+
+  if (out) {
+    (*out).print("MQTT connect ");
+    (*out).print(MQTT_HOST);
+    (*out).print(':');
+    (*out).print(MQTT_PORT);
+    (*out).print(" -> ");
+    (*out).println(connected ? "OK" : "FAILED");
+    if (!connected) {
+      (*out).print("MQTT state: ");
+      (*out).println(mqttClient.state());
+    }
+  }
+
+  return connected;
+}
+
+String gpsJson()
+{
+  const tcall::BufferedGpsInfo info = gpsBuffer.getGpsInformation();
+  const tcall::BufferedGpsTime time = gpsBuffer.getTime();
+  String json;
+  json.reserve(384);
+  json += "{\"valid\":";
+  json += info.valid ? "true" : "false";
+  json += ",\"has_fix\":";
+  json += info.hasFix ? "true" : "false";
+  json += ",\"fix_mode\":";
+  json += info.fixMode;
+  json += ",\"lat\":";
+  json += String(info.latitude, 6);
+  json += ",\"lon\":";
+  json += String(info.longitude, 6);
+  json += ",\"speed_mps\":";
+  json += String(info.speedMps, 3);
+  json += ",\"alt_m\":";
+  json += String(info.altitudeMeters, 2);
+  json += ",\"course_deg\":";
+  json += String(info.courseDegrees, 2);
+  json += ",\"sat_total\":";
+  json += info.totalSatellites;
+  json += ",\"sat_gps\":";
+  json += info.gpsSatellites;
+  json += ",\"sat_bds\":";
+  json += info.beidouSatellites;
+  json += ",\"sat_glo\":";
+  json += info.glonassSatellites;
+  json += ",\"sat_gal\":";
+  json += info.galileoSatellites;
+  json += ",\"pdop\":";
+  json += String(info.pdop, 2);
+  json += ",\"hdop\":";
+  json += String(info.hdop, 2);
+  json += ",\"vdop\":";
+  json += String(info.vdop, 2);
+  json += ",\"utc_valid\":";
+  json += time.valid ? "true" : "false";
+  json += ",\"utc\":\"";
+  json += time.year;
+  json += '-';
+  json += time.month;
+  json += '-';
+  json += time.day;
+  json += 'T';
+  json += time.hour;
+  json += ':';
+  json += time.minute;
+  json += ':';
+  json += time.second;
+  json += "\",\"age_ms\":";
+  json += info.valid ? String(millis() - info.updatedMs) : String(-1);
+  json += '}';
+  return json;
+}
+
+String statusJson()
+{
+  String json;
+  json.reserve(256);
+  json += "{\"uptime_ms\":";
+  json += millis();
+  json += ",\"wifi_connected\":";
+  json += WiFi.status() == WL_CONNECTED ? "true" : "false";
+  json += ",\"wifi_rssi\":";
+  json += WiFi.status() == WL_CONNECTED ? String(WiFi.RSSI()) : String(0);
+  json += ",\"ip\":\"";
+  json += WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "";
+  json += "\",\"mqtt_connected\":";
+  json += mqttClient.connected() ? "true" : "false";
+  json += ",\"gps_power_seen\":";
+  json += gpsBuffer.gpsPowerSeen() ? "true" : "false";
+  json += ",\"gps_last_poll_ok\":";
+  json += gpsBuffer.lastPollOk() ? "true" : "false";
+  json += '}';
+  return json;
+}
+
+bool mqttPublishTelemetry(Stream* out = nullptr)
+{
+  if (!mqttEnsureConnected(out)) {
+    return false;
+  }
+
+  const String gpsPayload = gpsJson();
+  const String statusPayload = statusJson();
+  const String gpsTopic = mqttTopic("gps");
+  const String statusTopic = mqttTopic("status");
+  const bool gpsOk = mqttClient.publish(gpsTopic.c_str(), gpsPayload.c_str(), true);
+  const bool statusOk = mqttClient.publish(statusTopic.c_str(), statusPayload.c_str(), true);
+
+  if (out) {
+    (*out).print("MQTT publish ");
+    (*out).print(gpsTopic);
+    (*out).print(" -> ");
+    (*out).println(gpsOk ? "OK" : "FAILED");
+    (*out).print("MQTT publish ");
+    (*out).print(statusTopic);
+    (*out).print(" -> ");
+    (*out).println(statusOk ? "OK" : "FAILED");
+  }
+
+  return gpsOk && statusOk;
 }
 
 void printBasicFix(const tcall::GnssFix& fix, Stream& out)
@@ -578,6 +807,69 @@ void handleDataCommand(String args, Stream& out)
   out.println("Usage: data up|down|status");
 }
 
+void handleMqttCommand(String args, Stream& out)
+{
+  String action = nextToken(args);
+  action.toLowerCase();
+
+  if (action.length() == 0 || action == "status") {
+    out.print("MQTT configured: ");
+    out.println(mqttConfigured() ? "yes" : "no");
+    out.print("MQTT host: ");
+    out.println(MQTT_HOST);
+    out.print("MQTT port: ");
+    out.println(MQTT_PORT);
+    out.print("MQTT transport: ");
+    out.println(mqttUseCellular() ? "cellular" : "wifi");
+    out.print("MQTT topic prefix: ");
+    out.println(MQTT_TOPIC_PREFIX);
+    out.print("MQTT connected: ");
+    out.println(mqttClient.connected() ? "yes" : "no");
+    out.print("MQTT state: ");
+    out.println(mqttClient.state());
+    return;
+  }
+
+  if (action == "publish") {
+    out.println(mqttPublishTelemetry(&out) ? "MQTT PUBLISH PASS" : "MQTT PUBLISH FAIL");
+    return;
+  }
+
+  out.println("Usage: mqtt status|publish");
+}
+
+void handleOtaCommand(String args, Stream& out)
+{
+  String action = nextToken(args);
+  action.toLowerCase();
+
+  if (action.length() == 0 || action == "config") {
+    githubOta.printConfig(out);
+    return;
+  }
+
+  if (action == "latest") {
+    if (!ensureCellularData(out)) {
+      out.println("OTA unavailable: could not bring LTE data up.");
+      return;
+    }
+    out.println(githubOta.printLatest(out) ? "OTA LATEST PASS" : "OTA LATEST FAIL");
+    return;
+  }
+
+  if (action == "update") {
+    if (!ensureCellularData(out)) {
+      out.println("OTA unavailable: could not bring LTE data up.");
+      return;
+    }
+    out.println("OTA UPDATE START");
+    out.println(githubOta.updateLatest(out) ? "OTA UPDATE PASS" : "OTA UPDATE FAIL");
+    return;
+  }
+
+  out.println("Usage: ota config|latest|update");
+}
+
 void handleGpsCommand(String args, Stream& out)
 {
   String action = nextToken(args);
@@ -734,6 +1026,10 @@ void executeCommand(String line, Stream& out)
     }
   } else if (command == "data") {
     handleDataCommand(line, out);
+  } else if (command == "mqtt") {
+    handleMqttCommand(line, out);
+  } else if (command == "ota") {
+    handleOtaCommand(line, out);
   } else if (command == "gsm") {
     handleGsmCommand(line, out);
   } else if (command == "http") {
@@ -851,6 +1147,25 @@ void pollWifiConsole()
   }
 }
 
+void pollMqtt()
+{
+  if (!mqttConfigured()) {
+    return;
+  }
+
+  if (mqttClient.connected()) {
+    mqttClient.loop();
+  } else if (millis() - nextMqttConnectMs >= MQTT_RECONNECT_INTERVAL_MS) {
+    nextMqttConnectMs = millis();
+    mqttEnsureConnected();
+  }
+
+  if (mqttClient.connected() && millis() - nextMqttPublishMs >= MQTT_PUBLISH_INTERVAL_MS) {
+    nextMqttPublishMs = millis();
+    mqttPublishTelemetry();
+  }
+}
+
 }  // namespace
 
 void setup()
@@ -863,6 +1178,10 @@ void setup()
   setupWifi();
   modemService.begin(Serial);
   modemService.waitOnline(45000, Serial);
+  if (GPS_AUTOSTART) {
+    Serial.println("GPS autostart enabled.");
+    gpsBuffer.begin();
+  }
   printHelp(Serial);
   Serial.print("> ");
 }
@@ -873,5 +1192,6 @@ void loop()
   gpsBuffer.runner();
   pollStreamConsole(Serial, serialCommandLine);
   pollWifiConsole();
+  pollMqtt();
   delay(1);
 }
