@@ -32,3 +32,62 @@
 #define TCALL_APN_PASS ""
 #endif
 
+#ifndef TCALL_MQTT_HOST
+#define TCALL_MQTT_HOST ""
+#endif
+
+#ifndef TCALL_MQTT_TRANSPORT
+#define TCALL_MQTT_TRANSPORT "wifi"
+#endif
+
+#ifndef TCALL_MQTT_PORT
+#define TCALL_MQTT_PORT 1883
+#endif
+
+#ifndef TCALL_MQTT_USER
+#define TCALL_MQTT_USER ""
+#endif
+
+#ifndef TCALL_MQTT_PASS
+#define TCALL_MQTT_PASS ""
+#endif
+
+#ifndef TCALL_MQTT_CLIENT_ID
+#define TCALL_MQTT_CLIENT_ID "tcall-a7670-v10"
+#endif
+
+#ifndef TCALL_MQTT_TOPIC_PREFIX
+#define TCALL_MQTT_TOPIC_PREFIX "tcall/a7670/v10"
+#endif
+
+#ifndef TCALL_MQTT_PUBLISH_INTERVAL_MS
+#define TCALL_MQTT_PUBLISH_INTERVAL_MS 10000UL
+#endif
+
+#ifndef TCALL_GPS_AUTOSTART
+#define TCALL_GPS_AUTOSTART 0
+#endif
+
+#ifndef TCALL_GITHUB_OTA_OWNER
+#define TCALL_GITHUB_OTA_OWNER ""
+#endif
+
+#ifndef TCALL_GITHUB_OTA_REPO
+#define TCALL_GITHUB_OTA_REPO ""
+#endif
+
+#ifndef TCALL_GITHUB_OTA_BIN_ASSET
+#define TCALL_GITHUB_OTA_BIN_ASSET ""
+#endif
+
+#ifndef TCALL_GITHUB_OTA_CRC_ASSET
+#define TCALL_GITHUB_OTA_CRC_ASSET ""
+#endif
+
+#ifndef TCALL_GITHUB_OTA_USER_AGENT
+#define TCALL_GITHUB_OTA_USER_AGENT "ESP32S3-TCU-LTE-OTA-Demo"
+#endif
+
+#ifndef TCALL_GITHUB_OTA_REBOOT_AFTER_UPDATE
+#define TCALL_GITHUB_OTA_REBOOT_AFTER_UPDATE 1
+#endif

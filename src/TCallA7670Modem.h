@@ -83,6 +83,8 @@ class TCallA7670Modem {
   bool deactivateData();
   bool dataActive();
   String localIP();
+  Client& cellularClient();
+  Client& cellularSecureClient();
   bool httpGet(const char* host, const char* path, uint16_t port, Stream& out);
   String listSms(const char* status = "ALL");
   bool sendSms(const char* number, const String& message, Stream& out);

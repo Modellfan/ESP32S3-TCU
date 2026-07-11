@@ -1,6 +1,9 @@
 .pio/
+.mqtt-venv/
+tools/mqtt_broker/nanomq/
 __pycache__/
 *.pyc
+*.env
 
 # Local/private hardware configuration
 src/LocalConfig.h
@@ -8,6 +11,7 @@ src/LocalConfig.h
 # Local reference material and generated proof logs
 Inputs/
 logs/
+broker-data/
 
 # Editor/OS noise
 .vscode/

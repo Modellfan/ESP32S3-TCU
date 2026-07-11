@@ -8,6 +8,7 @@ namespace {
 
 TinyGsm modem(SerialAT);
 TinyGsmClient client(modem);
+TinyGsmClientSecure secureClient(modem);
 String gpsEnableResponse;
 bool gpsEnablePending = false;
 uint32_t gpsEnableStartMs = 0;
@@ -459,6 +460,16 @@ bool TCallA7670Modem::dataActive()
 String TCallA7670Modem::localIP()
 {
   return modem.getLocalIP();
+}
+
+Client& TCallA7670Modem::cellularClient()
+{
+  return client;
+}
+
+Client& TCallA7670Modem::cellularSecureClient()
+{
+  return secureClient;
 }
 
 bool TCallA7670Modem::httpGet(const char* host, const char* path, uint16_t port, Stream& out)
