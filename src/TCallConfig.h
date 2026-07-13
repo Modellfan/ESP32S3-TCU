@@ -32,6 +32,10 @@
 #define TCALL_APN_PASS ""
 #endif
 
+#ifndef TCALL_PDP_TYPE
+#define TCALL_PDP_TYPE "IP"
+#endif
+
 #ifndef TCALL_MQTT_HOST
 #define TCALL_MQTT_HOST ""
 #endif

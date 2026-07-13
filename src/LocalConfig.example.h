@@ -12,6 +12,7 @@
 #define TCALL_APN "your-apn"
 #define TCALL_APN_USER "your-apn-user"
 #define TCALL_APN_PASS "your-apn-password"
+#define TCALL_PDP_TYPE "IP"
 
 #define TCALL_MQTT_HOST "192.168.1.10"
 #define TCALL_MQTT_TRANSPORT "wifi"  // "wifi" or "cellular"

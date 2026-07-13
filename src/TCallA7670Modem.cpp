@@ -333,7 +333,9 @@ bool TCallA7670Modem::configureApn(const char* apn, Stream& log)
 {
   log.println("Configuring APN context.");
   printAt(log, "+CMEE=2");
-  String cgdc = "+CGDCONT=1,\"IP\",\"";
+  String cgdc = "+CGDCONT=1,\"";
+  cgdc += TCALL_PDP_TYPE;
+  cgdc += "\",\"";
   cgdc += apn;
   cgdc += "\"";
   printAt(log, cgdc.c_str());
