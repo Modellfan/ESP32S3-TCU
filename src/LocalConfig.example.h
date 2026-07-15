@@ -34,4 +34,5 @@
 #define TCALL_GITHUB_OTA_BIN_ASSET ""  // Empty selects the first .bin release asset.
 #define TCALL_GITHUB_OTA_CRC_ASSET ""  // Empty selects <firmware>.crc32 or <firmware>.crc.
 #define TCALL_GITHUB_OTA_USER_AGENT "ESP32S3-TCU-LTE-OTA-Demo"
+#define TCALL_GITHUB_OTA_RAW_BRANCH "main"
 #define TCALL_GITHUB_OTA_REBOOT_AFTER_UPDATE 1

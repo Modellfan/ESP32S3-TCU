@@ -33,6 +33,10 @@ constexpr size_t HTTP_HEADER_LINE_LIMIT = 16384;
 #define TCALL_GITHUB_OTA_USER_AGENT "ESP32S3-TCU-LTE-OTA-Demo"
 #endif
 
+#ifndef TCALL_GITHUB_OTA_RAW_BRANCH
+#define TCALL_GITHUB_OTA_RAW_BRANCH "main"
+#endif
+
 #ifndef TCALL_GITHUB_OTA_REBOOT_AFTER_UPDATE
 #define TCALL_GITHUB_OTA_REBOOT_AFTER_UPDATE 1
 #endif
@@ -492,10 +496,14 @@ bool GitHubOtaDemo::latestRelease(GitHubReleaseInfo& release, Stream& out)
     baseUrl += release.tagName;
     baseUrl += "/";
     release.firmware.name = TCALL_GITHUB_OTA_BIN_ASSET;
-    release.firmware.url = assetApiUrlForName(json, release.firmware.name);
-    if (release.firmware.url.length() == 0) {
-      release.firmware.url = baseUrl + TCALL_GITHUB_OTA_BIN_ASSET;
-    }
+    release.firmware.url = "https://raw.githubusercontent.com/";
+    release.firmware.url += TCALL_GITHUB_OTA_OWNER;
+    release.firmware.url += "/";
+    release.firmware.url += TCALL_GITHUB_OTA_REPO;
+    release.firmware.url += "/";
+    release.firmware.url += TCALL_GITHUB_OTA_RAW_BRANCH;
+    release.firmware.url += "/releases/latest/";
+    release.firmware.url += TCALL_GITHUB_OTA_BIN_ASSET;
     release.crc.name = TCALL_GITHUB_OTA_CRC_ASSET;
     release.crc.url = assetApiUrlForName(json, release.crc.name);
     if (release.crc.url.length() == 0) {
