@@ -321,7 +321,11 @@ bool connectAndRequest(Client& client, const ParsedUrl& url, HttpHeaders& header
   client.print(url.host);
   client.print("\r\nUser-Agent: ");
   client.print(TCALL_GITHUB_OTA_USER_AGENT);
-  client.print("\r\nAccept: application/octet-stream, application/vnd.github+json, */*");
+  if (url.path.indexOf("/releases/assets/") >= 0) {
+    client.print("\r\nAccept: application/octet-stream");
+  } else {
+    client.print("\r\nAccept: application/octet-stream, application/vnd.github+json, */*");
+  }
   client.print("\r\nConnection: close\r\n\r\n");
 
   return readHeaders(client, headers, out);
