@@ -404,6 +404,8 @@ bool GitHubOtaDemo::updateLatest(Stream& out)
   uint32_t expectedCrc = 0;
   if (parseExpectedCrc(release.body, expectedCrc)) {
     out.println("Expected CRC32 source: release body");
+  } else if (parseExpectedCrc(release.tagName, expectedCrc)) {
+    out.println("Expected CRC32 source: release tag");
   } else {
     String crcText;
     if (!fetchString(release.crc.url, crcText, out, 128)) {
