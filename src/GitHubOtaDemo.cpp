@@ -11,6 +11,7 @@ constexpr const char* GITHUB_API_HOST = "api.github.com";
 constexpr uint16_t HTTPS_PORT = 443;
 constexpr uint32_t READ_TIMEOUT_MS = 30000;
 constexpr size_t HTTP_BUFFER_SIZE = 512;
+constexpr size_t HTTP_HEADER_LINE_LIMIT = 2048;
 
 #ifndef TCALL_GITHUB_OTA_OWNER
 #define TCALL_GITHUB_OTA_OWNER ""
@@ -234,7 +235,7 @@ bool readLine(Client& client, String& line, uint32_t timeoutMs)
         return true;
       }
       line += c;
-      if (line.length() > 300) {
+      if (line.length() > HTTP_HEADER_LINE_LIMIT) {
         return false;
       }
     }
