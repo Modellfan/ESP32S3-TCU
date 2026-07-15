@@ -9,7 +9,7 @@ namespace {
 
 constexpr const char* GITHUB_API_HOST = "api.github.com";
 constexpr uint16_t HTTPS_PORT = 443;
-constexpr uint32_t READ_TIMEOUT_MS = 30000;
+constexpr uint32_t READ_TIMEOUT_MS = 60000;
 constexpr size_t HTTP_BUFFER_SIZE = 512;
 constexpr size_t HTTP_HEADER_LINE_LIMIT = 16384;
 
@@ -155,7 +155,10 @@ bool parseReleaseAssets(const String& json, tcall::GitHubReleaseInfo& release)
 {
   release.tagName = jsonStringValue(json, "tag_name");
   release.body = jsonStringValue(json, "body");
-  int pos = 0;
+  int pos = json.indexOf("\"assets\"");
+  if (pos < 0) {
+    return false;
+  }
   while (pos >= 0 && pos < static_cast<int>(json.length())) {
     int namePos = json.indexOf("\"name\"", pos);
     if (namePos < 0) {
@@ -175,7 +178,7 @@ bool parseReleaseAssets(const String& json, tcall::GitHubReleaseInfo& release)
     return false;
   }
 
-  pos = 0;
+  pos = json.indexOf("\"assets\"");
   while (pos >= 0 && pos < static_cast<int>(json.length())) {
     int namePos = json.indexOf("\"name\"", pos);
     if (namePos < 0) {
@@ -440,7 +443,7 @@ bool GitHubOtaDemo::latestRelease(GitHubReleaseInfo& release, Stream& out)
   apiUrl += "/releases/latest";
 
   String json;
-  if (!fetchString(apiUrl, json, out, 16000)) {
+  if (!fetchString(apiUrl, json, out, 64000)) {
     out.println("OTA failed: could not fetch latest release metadata.");
     return false;
   }
