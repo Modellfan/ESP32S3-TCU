@@ -447,6 +447,23 @@ bool GitHubOtaDemo::latestRelease(GitHubReleaseInfo& release, Stream& out)
     out.println("OTA failed: could not fetch latest release metadata.");
     return false;
   }
+  release.tagName = jsonStringValue(json, "tag_name");
+  release.body = jsonStringValue(json, "body");
+  if (release.tagName.length() > 0 && strlen(TCALL_GITHUB_OTA_BIN_ASSET) > 0 &&
+      strlen(TCALL_GITHUB_OTA_CRC_ASSET) > 0) {
+    String baseUrl = "https://github.com/";
+    baseUrl += TCALL_GITHUB_OTA_OWNER;
+    baseUrl += "/";
+    baseUrl += TCALL_GITHUB_OTA_REPO;
+    baseUrl += "/releases/download/";
+    baseUrl += release.tagName;
+    baseUrl += "/";
+    release.firmware.name = TCALL_GITHUB_OTA_BIN_ASSET;
+    release.firmware.url = baseUrl + TCALL_GITHUB_OTA_BIN_ASSET;
+    release.crc.name = TCALL_GITHUB_OTA_CRC_ASSET;
+    release.crc.url = baseUrl + TCALL_GITHUB_OTA_CRC_ASSET;
+    return true;
+  }
   if (!parseReleaseAssets(json, release)) {
     out.println("OTA failed: latest release needs a matching .bin asset and CRC sidecar.");
     return false;
