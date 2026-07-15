@@ -308,7 +308,11 @@ bool readHeaders(Client& client, HttpHeaders& headers, Stream& out)
   return false;
 }
 
-bool connectAndRequest(Client& client, const ParsedUrl& url, HttpHeaders& headers, Stream& out)
+bool connectAndRequest(Client& client,
+                       const ParsedUrl& url,
+                       HttpHeaders& headers,
+                       Stream& out,
+                       size_t rangeStart = 0)
 {
   out.print("OTA HTTPS GET ");
   out.print(url.host);
@@ -329,6 +333,11 @@ bool connectAndRequest(Client& client, const ParsedUrl& url, HttpHeaders& header
     client.print("\r\nAccept: application/octet-stream");
   } else {
     client.print("\r\nAccept: application/octet-stream, application/vnd.github+json, */*");
+  }
+  if (rangeStart > 0) {
+    client.print("\r\nRange: bytes=");
+    client.print(rangeStart);
+    client.print("-");
   }
   client.print("\r\nConnection: close\r\n\r\n");
 
@@ -565,6 +574,11 @@ bool GitHubOtaDemo::fetchString(const String& url, String& body, Stream& out, si
 bool GitHubOtaDemo::downloadFirmware(const String& url, uint32_t expectedCrc, Stream& out)
 {
   String current = url;
+  size_t totalExpected = 0;
+  size_t written = 0;
+  uint32_t crc = 0;
+  bool updateStarted = false;
+  uint8_t transferAttempts = 0;
   for (uint8_t redirect = 0; redirect < 4; ++redirect) {
     ParsedUrl parsed;
     if (!parseUrl(current, parsed)) {
@@ -575,7 +589,7 @@ bool GitHubOtaDemo::downloadFirmware(const String& url, uint32_t expectedCrc, St
 
     Client& client = modem_.cellularSecureClient();
     HttpHeaders headers;
-    if (!connectAndRequest(client, parsed, headers, out)) {
+    if (!connectAndRequest(client, parsed, headers, out, written)) {
       client.stop();
       return false;
     }
@@ -588,25 +602,26 @@ bool GitHubOtaDemo::downloadFirmware(const String& url, uint32_t expectedCrc, St
       continue;
     }
 
-    if (headers.status != 200) {
+    if ((written == 0 && headers.status != 200) || (written > 0 && headers.status != 206)) {
       out.print("OTA HTTP status: ");
       out.println(headers.status);
       client.stop();
       return false;
     }
 
-    const size_t updateSize = headers.contentLength > 0 ? static_cast<size_t>(headers.contentLength) :
-                                                          UPDATE_SIZE_UNKNOWN;
-    if (!Update.begin(updateSize)) {
-      out.print("OTA Update.begin failed: ");
-      Update.printError(out);
-      client.stop();
-      return false;
+    if (!updateStarted) {
+      totalExpected = headers.contentLength > 0 ? static_cast<size_t>(headers.contentLength) : 0;
+      const size_t updateSize = totalExpected > 0 ? totalExpected : UPDATE_SIZE_UNKNOWN;
+      if (!Update.begin(updateSize)) {
+        out.print("OTA Update.begin failed: ");
+        Update.printError(out);
+        client.stop();
+        return false;
+      }
+      updateStarted = true;
     }
 
     uint8_t buffer[HTTP_BUFFER_SIZE];
-    uint32_t crc = 0;
-    size_t written = 0;
 
     auto writeBytes = [&](const uint8_t* data, size_t len) -> bool {
       crc = crc32Update(crc, data, len);
@@ -667,7 +682,7 @@ bool GitHubOtaDemo::downloadFirmware(const String& url, uint32_t expectedCrc, St
           ok = false;
           break;
         }
-        if (headers.contentLength > 0 && written >= static_cast<size_t>(headers.contentLength)) {
+        if (totalExpected > 0 && written >= totalExpected) {
           break;
         }
         delay(1);
@@ -675,7 +690,18 @@ bool GitHubOtaDemo::downloadFirmware(const String& url, uint32_t expectedCrc, St
     }
 
     client.stop();
-    if (!ok || (headers.contentLength > 0 && written != static_cast<size_t>(headers.contentLength))) {
+    if (!ok || (totalExpected > 0 && written != totalExpected)) {
+      if (ok && !headers.chunked && totalExpected > 0 && written < totalExpected &&
+          transferAttempts < 3) {
+        ++transferAttempts;
+        out.print("OTA download incomplete, resuming at byte ");
+        out.print(written);
+        out.print(" of ");
+        out.println(totalExpected);
+        current = url;
+        --redirect;
+        continue;
+      }
       out.println("OTA failed: incomplete firmware download.");
       Update.abort();
       return false;
