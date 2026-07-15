@@ -210,8 +210,6 @@ bool parseExpectedCrc(const String& text, uint32_t& crc)
       nibble = c - 'a' + 10;
     } else if (c >= 'A' && c <= 'F') {
       nibble = c - 'A' + 10;
-    } else if (digits > 0) {
-      break;
     }
 
     if (nibble >= 0) {
@@ -221,6 +219,9 @@ bool parseExpectedCrc(const String& text, uint32_t& crc)
         crc = value;
         return true;
       }
+    } else {
+      value = 0;
+      digits = 0;
     }
   }
   return false;
