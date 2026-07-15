@@ -121,6 +121,32 @@ String jsonStringValue(const String& json, const char* key, int from = 0)
   return "";
 }
 
+String assetApiUrlForName(const String& json, const String& assetName)
+{
+  int pos = json.indexOf("\"assets\"");
+  while (pos >= 0 && pos < static_cast<int>(json.length())) {
+    int namePos = json.indexOf("\"name\"", pos);
+    if (namePos < 0) {
+      break;
+    }
+    String name = jsonStringValue(json, "name", namePos);
+    if (name == assetName) {
+      int objectStart = json.lastIndexOf('{', namePos);
+      int objectEnd = json.indexOf('}', namePos);
+      if (objectStart >= 0 && objectEnd > objectStart) {
+        String objectJson = json.substring(objectStart, objectEnd + 1);
+        String url = jsonStringValue(objectJson, "url");
+        if (url.startsWith("https://api.github.com/")) {
+          return url;
+        }
+      }
+      return "";
+    }
+    pos = namePos + 6;
+  }
+  return "";
+}
+
 bool endsWithIgnoreCase(const String& value, const char* suffix)
 {
   const size_t valueLen = value.length();
@@ -462,9 +488,15 @@ bool GitHubOtaDemo::latestRelease(GitHubReleaseInfo& release, Stream& out)
     baseUrl += release.tagName;
     baseUrl += "/";
     release.firmware.name = TCALL_GITHUB_OTA_BIN_ASSET;
-    release.firmware.url = baseUrl + TCALL_GITHUB_OTA_BIN_ASSET;
+    release.firmware.url = assetApiUrlForName(json, release.firmware.name);
+    if (release.firmware.url.length() == 0) {
+      release.firmware.url = baseUrl + TCALL_GITHUB_OTA_BIN_ASSET;
+    }
     release.crc.name = TCALL_GITHUB_OTA_CRC_ASSET;
-    release.crc.url = baseUrl + TCALL_GITHUB_OTA_CRC_ASSET;
+    release.crc.url = assetApiUrlForName(json, release.crc.name);
+    if (release.crc.url.length() == 0) {
+      release.crc.url = baseUrl + TCALL_GITHUB_OTA_CRC_ASSET;
+    }
     return true;
   }
   if (!parseReleaseAssets(json, release)) {
