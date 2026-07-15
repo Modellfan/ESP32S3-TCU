@@ -692,7 +692,7 @@ bool GitHubOtaDemo::downloadFirmware(const String& url, uint32_t expectedCrc, St
     client.stop();
     if (!ok || (totalExpected > 0 && written != totalExpected)) {
       if (ok && !headers.chunked && totalExpected > 0 && written < totalExpected &&
-          transferAttempts < 3) {
+          transferAttempts < 12) {
         ++transferAttempts;
         out.print("OTA download incomplete, resuming at byte ");
         out.print(written);
