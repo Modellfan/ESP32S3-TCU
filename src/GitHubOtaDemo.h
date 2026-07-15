@@ -13,6 +13,7 @@ struct GitHubReleaseAsset {
 
 struct GitHubReleaseInfo {
   String tagName;
+  String body;
   GitHubReleaseAsset firmware;
   GitHubReleaseAsset crc;
 };

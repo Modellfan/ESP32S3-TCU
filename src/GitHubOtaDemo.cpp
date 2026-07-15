@@ -154,6 +154,7 @@ bool assetMatchesCrc(const String& name, const String& firmwareName)
 bool parseReleaseAssets(const String& json, tcall::GitHubReleaseInfo& release)
 {
   release.tagName = jsonStringValue(json, "tag_name");
+  release.body = jsonStringValue(json, "body");
   int pos = 0;
   while (pos >= 0 && pos < static_cast<int>(json.length())) {
     int namePos = json.indexOf("\"name\"", pos);
@@ -396,16 +397,21 @@ bool GitHubOtaDemo::updateLatest(Stream& out)
     return false;
   }
 
-  String crcText;
-  if (!fetchString(release.crc.url, crcText, out, 128)) {
-    out.println("OTA failed: could not download CRC sidecar.");
-    return false;
-  }
-
   uint32_t expectedCrc = 0;
-  if (!parseExpectedCrc(crcText, expectedCrc)) {
-    out.println("OTA failed: CRC sidecar must contain an 8-digit hex CRC32.");
-    return false;
+  if (parseExpectedCrc(release.body, expectedCrc)) {
+    out.println("Expected CRC32 source: release body");
+  } else {
+    String crcText;
+    if (!fetchString(release.crc.url, crcText, out, 128)) {
+      out.println("OTA failed: could not download CRC sidecar.");
+      return false;
+    }
+
+    if (!parseExpectedCrc(crcText, expectedCrc)) {
+      out.println("OTA failed: CRC sidecar must contain an 8-digit hex CRC32.");
+      return false;
+    }
+    out.println("Expected CRC32 source: CRC sidecar");
   }
 
   out.print("Latest tag: ");
