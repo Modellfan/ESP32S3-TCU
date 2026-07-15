@@ -11,7 +11,7 @@ constexpr const char* GITHUB_API_HOST = "api.github.com";
 constexpr uint16_t HTTPS_PORT = 443;
 constexpr uint32_t READ_TIMEOUT_MS = 30000;
 constexpr size_t HTTP_BUFFER_SIZE = 512;
-constexpr size_t HTTP_HEADER_LINE_LIMIT = 2048;
+constexpr size_t HTTP_HEADER_LINE_LIMIT = 16384;
 
 #ifndef TCALL_GITHUB_OTA_OWNER
 #define TCALL_GITHUB_OTA_OWNER ""
