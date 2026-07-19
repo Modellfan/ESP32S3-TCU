@@ -426,7 +426,7 @@ h1{font-size:22px;margin:0 0 4px}.subtitle{color:var(--muted)}
 .metric,.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px}
 .metric{padding:13px 14px;min-height:82px}.label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}.value{font-size:20px;font-weight:650;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .panel{padding:14px}.panel-head{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:12px}.panel-head:empty{display:none}.panel-title{font-weight:650}.panel-note{color:var(--muted);font-size:12px}
-.view{display:none}.view.active{display:block}.split{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr);gap:12px}
+.view{display:none}.view.active{display:block}.split{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr);gap:12px}.device-grid{display:grid;grid-template-columns:repeat(3,minmax(240px,1fr));gap:12px}
 pre,.console{margin:0;background:var(--code);color:var(--codeText);border-radius:8px;padding:12px;overflow:auto;white-space:pre-wrap}
 .console{height:470px;font:13px/1.45 Consolas,"Cascadia Mono",monospace}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row.tight{margin-top:10px}
@@ -439,11 +439,11 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
 .file-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:14px;margin-top:14px}.file-card{position:relative;min-height:154px;border:1px solid var(--line);border-radius:8px;background:white;padding:13px;display:grid;grid-template-rows:auto minmax(38px,1fr) auto;gap:9px;cursor:default;user-select:none;overflow:hidden}.file-card:hover{border-color:#9fb0bd;box-shadow:0 6px 18px rgba(25,39,52,.08)}.file-card.pending{opacity:.45}.file-icon{width:50px;height:60px;border:1px solid #bed0da;border-radius:7px 7px 5px 5px;background:#f7fafb;display:grid;place-items:end center;padding-bottom:8px;color:#355062;font-weight:750;font-size:12px;letter-spacing:.04em;position:relative}.file-icon:before{content:"";position:absolute;right:-1px;top:-1px;border-left:14px solid transparent;border-bottom:14px solid #dce7ed}.file-icon.bin{background:#eefaf6;color:#14765f}.file-icon.json,.file-icon.cfg{background:#eef5ff;color:#2b6fbd}.file-icon.txt,.file-icon.log{background:#fff8e8;color:#805400}.file-icon.img{background:#fff1f1;color:#982626}.file-name{font-weight:650;line-height:1.22;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}.file-meta{color:var(--muted);font-size:12px}.file-progress{position:absolute;inset:0;display:grid;place-items:center;background:rgba(255,255,255,.62);border-radius:8px}.progress-ring{--p:0;width:46px;height:46px;border-radius:50%;background:conic-gradient(var(--teal) calc(var(--p)*1%),#d4dde3 0);display:grid;place-items:center;color:#102018;font-size:11px;font-weight:700}.progress-ring:after{content:"";position:absolute;width:31px;height:31px;border-radius:50%;background:white}.progress-ring span{position:relative;z-index:1}.empty-files{grid-column:1/-1;border:1px dashed #c7d4dc;border-radius:8px;background:#fbfcfd;padding:28px;text-align:center;color:var(--muted);margin-top:14px}.context-menu{position:fixed;z-index:900;background:#111820;color:white;border:1px solid #2b3842;border-radius:8px;box-shadow:0 16px 40px rgba(0,0,0,.24);padding:6px;min-width:190px;display:none}.context-menu.show{display:block}.context-menu button{display:block;width:100%;height:34px;text-align:left;border:0;background:transparent;color:white;border-radius:6px;padding:0 10px;cursor:pointer}.context-menu button:hover{background:#1d2a35}.context-menu button.danger{color:#ffb6b6}
 .status-list{display:grid;gap:8px}.status-item{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #e4eaee;padding:8px 0}.status-item:last-child{border-bottom:0}
 .badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 8px;background:#fff;font-size:12px}.badge.ok{border-color:#a8d8ca;color:#14765f;background:#eefaf6}.badge.warn{border-color:#e8ce97;color:#805400;background:#fff8e8}.badge.err{border-color:#e2b0b0;color:#982626;background:#fff1f1}
-.cards{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}.topic-card pre{max-height:240px}.messages{height:430px}
+.messages{height:430px}
 .map-shell{position:relative;min-height:620px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#dfe7e9}.vehicle-map{height:620px;width:100%}.map-overlay{position:absolute;left:14px;top:14px;z-index:500;display:grid;gap:8px;max-width:320px}.map-card{background:rgba(17,24,32,.92);color:#f7fbfd;border:1px solid #314552;border-radius:8px;padding:11px 12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}.speed-value{font-size:28px;font-weight:750;line-height:1}.speed-unit{color:#9fb0bd;font-size:12px;margin-left:4px}.map-meta{display:grid;gap:4px;color:#c6d4dd;font-size:12px}.vehicle-marker{width:28px;height:28px;border-radius:50%;background:#1fa889;border:3px solid #fff;box-shadow:0 3px 12px rgba(0,0,0,.35);position:relative}.vehicle-marker:after{content:"";position:absolute;left:50%;top:-8px;transform:translateX(-50%);border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid #fff}
 .upload-line{display:grid;grid-template-columns:1fr auto;gap:8px}.file-input{border:1px solid var(--line);border-radius:8px;padding:7px;background:white}.file-input.hidden{display:none}
 .toast{position:fixed;right:18px;bottom:18px;background:#111820;color:white;border-radius:8px;padding:10px 12px;opacity:0;transform:translateY(10px);transition:.18s}.toast.show{opacity:1;transform:translateY(0)}
-@media(max-width:980px){.app{grid-template-columns:1fr}.sidebar{position:static}.metrics{grid-template-columns:repeat(2,minmax(130px,1fr))}.split{grid-template-columns:1fr}.topbar{display:grid}.file-toolbar{grid-template-columns:1fr}}
+@media(max-width:980px){.app{grid-template-columns:1fr}.sidebar{position:static}.metrics{grid-template-columns:repeat(2,minmax(130px,1fr))}.split,.device-grid{grid-template-columns:1fr}.topbar{display:grid}.file-toolbar{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -520,11 +520,11 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
     </div>
 
     <section id="device" class="view active">
-      <div class="split">
-        <div class="panel"><div class="status-list" id="deviceState"></div></div>
-        <div class="panel"><pre id="gpsState">{}</pre></div>
+      <div class="device-grid">
+        <div class="panel"><div class="status-list" id="deviceConnectivity"></div></div>
+        <div class="panel"><div class="status-list" id="deviceSystem"></div></div>
+        <div class="panel"><div class="status-list" id="deviceGpsSummary"></div></div>
       </div>
-      <div class="panel" style="margin-top:12px"><div class="grid cards" id="cards"></div></div>
     </section>
 
     <section id="map" class="view">
@@ -665,7 +665,7 @@ function renderFiles(){
   $('fileSyncText').textContent=busy?'syncing':'updated '+(age?Math.round(age)+'s ago':'automatically');
 }
 function render(){
-  const r=state.retained||{}, st=retained('status'), rdm=retained('rdm/state'), gps=retained('gps'), ota=retained('ota/state'), fs=retained('fs/state');
+  const st=retained('status'), rdm=retained('rdm/state'), gps=retained('gps'), ota=retained('ota/state'), fs=retained('fs/state');
   const aliveMsg=latestMessage('rdm/alive'), alive=aliveMsg?aliveMsg.payload:{};
   const deviceId=rdm.device_id||st.device_id||alive.device_id||'eboxster', transport=(alive.transport||rdm.transport||st.mqtt_transport||'').toLowerCase(), server=state.server||{}, checks=state.server_checks||{};
   $('brandDevice').textContent='remote access';
@@ -719,12 +719,35 @@ function render(){
   setPulse('serverHttpPublicPulse',checks.http_public);
   setPulse('serverMqttLocalPulse',checks.mqtt_lan);
   setPulse('serverMqttPublicPulse',checks.mqtt_public);
-  $('deviceState').innerHTML=[
-    ['Transport',rdm.transport||st.mqtt_transport||'-'],['MQTT',mqttOk?badge(true,'connected'):badge(false,'offline')],['IP address',st.ip||'-'],['SPIFFS',fmtBytes(fs.used)+' / '+fmtBytes(fs.total)],['GPS fix',gps.has_fix?badge(true,'fix'):badge(false,'no fix')],['Firmware',rdm.fw_version||ota.fw_version||'-']
-  ].map(([k,v])=>'<div class="status-item"><span>'+k+'</span><strong>'+v+'</strong></div>').join('');
-  $('gpsState').textContent=JSON.stringify(gps,null,2);
+  const statusRow=([k,v])=>'<div class="status-item"><span>'+k+'</span><strong>'+v+'</strong></div>';
+  const wifiIp=(alive.wifi&&alive.wifi.ip)||st.ip||'-';
+  const lteIp=(alive.lte&&alive.lte.ip)||st.lte_ip||st.cellular_ip||'-';
+  const checkBadges=(mqtt,http)=>badge(!!mqtt,'MQTT')+' '+badge(!!http,'HTTP');
+  const gpsLat=Number(gps.lat||0), gpsLon=Number(gps.lon||0);
+  const gpsPosition=(gps.has_fix||gps.valid)?(gpsLat.toFixed(6)+', '+gpsLon.toFixed(6)):'-';
+  $('deviceConnectivity').innerHTML=[
+    ['Active link',activeLink.toUpperCase()],
+    ['WiFi',wifiOk?badge(true,'connected')+' '+wifiIp:badge(false,'offline')+' '+wifiIp],
+    ['WiFi checks',checkBadges(wifiMqttOk,wifiHttpOk)],
+    ['LTE',lteOk?badge(true,'connected')+' '+lteIp:badge(false,'offline')+' '+lteIp],
+    ['LTE checks',checkBadges(lteMqttOk,lteHttpOk)]
+  ].map(statusRow).join('');
+  $('deviceSystem').innerHTML=[
+    ['Transport',rdm.transport||st.mqtt_transport||'-'],
+    ['Control MQTT',mqttOk?badge(true,'connected'):badge(false,'offline')],
+    ['Firmware',rdm.fw_version||ota.fw_version||'-'],
+    ['Uptime',fmtUptime(rdm.uptime_ms||st.uptime_ms||alive.uptime_ms)],
+    ['SPIFFS',fmtBytes(fs.used)+' / '+fmtBytes(fs.total)]
+  ].map(statusRow).join('');
+  $('deviceGpsSummary').innerHTML=[
+    ['Fix',gps.has_fix?badge(true,'fix'):badge(false,'no fix')],
+    ['Position',gpsPosition],
+    ['Speed',(Number(gps.speed_mps||0)*3.6).toFixed(1)+' km/h'],
+    ['Satellites',gps.sat_total??'-'],
+    ['UTC',gps.utc_valid?(gps.utc||'-'):'-'],
+    ['Age',gps.age_ms!=null&&gps.age_ms>=0?fmtUptime(gps.age_ms):'-']
+  ].map(statusRow).join('');
   renderVehicleMap(gps);
-  $('cards').innerHTML=Object.keys(r).sort().map(k=>'<div class="panel topic-card"><div class="panel-title">'+k+'</div><pre>'+JSON.stringify(r[k],null,2)+'</pre></div>').join('');
   const consoleMsgs=(state.messages||[]).filter(m=>m.topic.endsWith('/console/out'));
   $('consoleOut').textContent=localConsole+consoleMsgs.map(m=>m.payload.payload||'').join('');
   const final=consoleMsgs.slice().reverse().find(m=>m.payload.final);$('consoleBadge').textContent=final?'exit '+final.payload.exit_code:'idle';
