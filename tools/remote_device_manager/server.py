@@ -433,6 +433,7 @@ pre,.console{margin:0;background:var(--code);color:var(--codeText);border-radius
 .file-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:8px;align-items:center;margin-top:10px}
 input[type=text],input:not([type]){height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:white;min-width:0}
 .cmd{flex:1}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:8px;background:white}
+.console-input-wrap{position:relative;flex:1;min-width:240px}.console-input-wrap .cmd{width:100%;box-sizing:border-box}.command-suggestions{position:absolute;left:0;right:0;bottom:42px;z-index:700;background:white;border:1px solid var(--line);border-radius:8px;box-shadow:0 14px 34px rgba(25,39,52,.14);max-height:260px;overflow:auto;padding:6px;display:none}.command-suggestions.show{display:block}.command-suggestion{display:grid;grid-template-columns:minmax(120px,.45fr) minmax(0,1fr);gap:10px;width:100%;border:0;background:transparent;border-radius:6px;padding:8px 9px;text-align:left;cursor:pointer;color:var(--ink)}.command-suggestion:hover,.command-suggestion.active{background:#eef5f7}.command-suggestion code{font-family:Consolas,"Cascadia Mono",monospace;font-weight:700;color:#163040}.command-suggestion span{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:1px solid #e4eaee;text-align:left;vertical-align:middle}th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:#f7f9fa}tr:last-child td{border-bottom:0}.path{font-family:Consolas,"Cascadia Mono",monospace}
 .drop{border:1px dashed #8ea1ad;background:#f9fbfb;border-radius:8px;padding:18px;text-align:center;color:var(--muted);margin:10px 0;cursor:pointer}.drop.drag{border-color:var(--teal);background:#edf9f6;color:#146c5a}
 .file-sync{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.sync-ring{width:18px;height:18px;border-radius:50%;border:2px solid #d4dde3;border-top-color:var(--teal);animation:spin .9s linear infinite}.sync-ring.idle{animation:none;border-top-color:#d4dde3}@keyframes spin{to{transform:rotate(360deg)}}
@@ -549,7 +550,13 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
       <div class="panel">
         <div class="panel-head"><span class="badge" id="consoleBadge">idle</span></div>
         <div class="console" id="consoleOut"></div>
-        <div class="row tight"><input class="cmd" id="cmd" onkeydown="if(event.key==='Enter')sendCmd()" placeholder="help"><button class="btn primary" onclick="sendCmd()">Send</button><button class="btn" onclick="clearConsole()">Clear</button></div>
+        <div class="row tight">
+          <div class="console-input-wrap">
+            <div class="command-suggestions" id="commandSuggestions"></div>
+            <input class="cmd" id="cmd" onfocus="showCommandSuggestions()" oninput="showCommandSuggestions()" onkeydown="handleCommandKey(event)" placeholder="help" autocomplete="off">
+          </div>
+          <button class="btn primary" onclick="sendCmd()">Send</button><button class="btn" onclick="clearConsole()">Clear</button>
+        </div>
       </div>
     </section>
 
@@ -594,11 +601,53 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
 let state={}, activeView='device', localConsole='', pendingTransport=null, pendingTransportUntil=0, vehicleMap=null, vehicleMarker=null;
 let uploadItems={}, fileListRequestedAt=0, fileListBusy=false, selectedFilePath='', longPressTimer=null, fileMenuOpenedAt=0;
 const titles={device:['Device','Live remote state over MQTT control plane.'],map:['Map','Vehicle position and speed from GPS telemetry.'],console:['Console','Run firmware commands without opening a serial port.'],files:['Files','SPIFFS file transfer over the RemoteDeviceManager data plane.'],ota:['OTA','Firmware update operations and results.'],trace:['MQTT Trace','Raw controller message buffer.']};
+const consoleCommands=[
+  ['help','Show all firmware console commands'],
+  ['diag','Print modem and board diagnostics'],
+  ['at ','Send raw AT command to modem'],
+  ['sim status','Show SIM status'],
+  ['sim pin-off','Disable SIM PIN'],
+  ['sms list all','List all SMS'],
+  ['sms list unread','List unread SMS'],
+  ['sms list read','List read SMS'],
+  ['sms send ','Send SMS: sms send <number> <message>'],
+  ['reg','Print and wait for network registration'],
+  ['operator status','Show operator registration status'],
+  ['operator auto','Select operator automatically'],
+  ['operator telekom','Select Telekom operator'],
+  ['rat auto','Use automatic RAT selection'],
+  ['rat lte','Force LTE RAT'],
+  ['data status','Show cellular data status'],
+  ['data up','Bring cellular data up'],
+  ['data down','Bring cellular data down'],
+  ['mqtt status','Show RemoteDeviceManager MQTT status'],
+  ['mqtt publish','Publish telemetry test message'],
+  ['ota config','Show GitHub OTA configuration'],
+  ['ota latest','Check latest GitHub release'],
+  ['ota update','Run latest GitHub OTA update'],
+  ['gsm prove ','Run LTE HTTP proof test'],
+  ['gsm tcp ','Run LTE TCP probe'],
+  ['gsm reset','Reset modem data path'],
+  ['http ','HTTP GET: http <host> [path]'],
+  ['gps status','Show GNSS status'],
+  ['gps on','Enable GNSS'],
+  ['gps off','Disable GNSS'],
+  ['gps raw','Read raw GNSS data'],
+  ['gps fix','Read basic GNSS fix'],
+  ['gps ex','Read extended GNSS fix'],
+  ['gps cache','Show buffered GNSS data'],
+  ['gps prove ','Run GNSS proof until fix'],
+  ['gps hot','Start hot GNSS mode'],
+  ['gps cold','Start cold GNSS mode'],
+  ['wifi status','Show WiFi status']
+];
+let commandSuggestionIndex=-1;
 function topic(s){return (state.topic_prefix||'eboxster')+'/'+s}
 function $(id){return document.getElementById(id)}
 function showToast(text){let t=$('toast');t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
 function setView(id){activeView=id;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===id));document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===id));$('pageTitle').textContent=titles[id][0];$('pageSubtitle').textContent=titles[id][1];hideFileMenu();if(id==='map')setTimeout(()=>{initVehicleMap();renderVehicleMap(retained('gps'))},80);if(id==='files')listFiles(true)}
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>setView(b.dataset.view));
+document.addEventListener('click',event=>{if(!event.target.closest('.console-input-wrap'))hideCommandSuggestions()});
 async function api(path,body){let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});let data=await r.json();if(!r.ok||data.error)throw new Error(data.error||r.statusText);return data}
 async function refresh(){state=await (await fetch('/api/state')).json();render()}
 function fmtBytes(n){if(n==null)return '-';if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';return (n/1048576).toFixed(2)+' MB'}
@@ -756,7 +805,51 @@ function render(){
   $('otaState').textContent=JSON.stringify({state:ota,results:(state.messages||[]).filter(m=>m.topic.endsWith('/ota/result')).slice(-8)},null,2);
   $('messages').textContent=JSON.stringify((state.messages||[]).slice(-80),null,2);
 }
-async function sendCmd(){let c=$('cmd'), command=c.value.trim();if(!command)return;localConsole+='> '+command+'\n';c.value='';let res=await api('/api/console',{command});showToast('Console command queued: '+res.command_id)}
+function commandMatches(text){
+  const q=(text||'').trim().toLowerCase();
+  if(!q)return consoleCommands;
+  return consoleCommands.filter(([cmd])=>cmd.toLowerCase().startsWith(q)||cmd.split(' ')[0].toLowerCase().startsWith(q));
+}
+function renderCommandSuggestions(matches){
+  const box=$('commandSuggestions');
+  if(!box)return;
+  commandSuggestionIndex=Math.max(-1,Math.min(commandSuggestionIndex,matches.length-1));
+  box.innerHTML=matches.map(([cmd,desc],i)=>'<button type="button" class="command-suggestion '+(i===commandSuggestionIndex?'active':'')+'" onmousedown="pickCommandSuggestion('+i+')"><code>'+escapeHtml(cmd)+'</code><span>'+escapeHtml(desc)+'</span></button>').join('');
+  box.classList.toggle('show',matches.length>0&&document.activeElement===$('cmd'));
+}
+function showCommandSuggestions(){
+  commandSuggestionIndex=-1;
+  renderCommandSuggestions(commandMatches($('cmd').value));
+}
+function hideCommandSuggestions(){let box=$('commandSuggestions');if(box)box.classList.remove('show');commandSuggestionIndex=-1}
+function pickCommandSuggestion(index){
+  const matches=commandMatches($('cmd').value);
+  if(index<0||index>=matches.length)return;
+  $('cmd').value=matches[index][0];
+  $('cmd').focus();
+  hideCommandSuggestions();
+}
+function handleCommandKey(event){
+  const matches=commandMatches($('cmd').value);
+  if(event.key==='ArrowDown'){
+    event.preventDefault();
+    commandSuggestionIndex=(commandSuggestionIndex+1)%Math.max(1,matches.length);
+    renderCommandSuggestions(matches);
+  }else if(event.key==='ArrowUp'){
+    event.preventDefault();
+    commandSuggestionIndex=(commandSuggestionIndex<=0?matches.length:commandSuggestionIndex)-1;
+    renderCommandSuggestions(matches);
+  }else if(event.key==='Tab'&&matches.length){
+    event.preventDefault();
+    pickCommandSuggestion(commandSuggestionIndex>=0?commandSuggestionIndex:0);
+  }else if(event.key==='Escape'){
+    hideCommandSuggestions();
+  }else if(event.key==='Enter'){
+    event.preventDefault();
+    sendCmd();
+  }
+}
+async function sendCmd(){let c=$('cmd'), command=c.value.trim();if(!command)return;hideCommandSuggestions();localConsole+='> '+command+'\n';c.value='';let res=await api('/api/console',{command});showToast('Console command queued: '+res.command_id)}
 function clearConsole(){localConsole='';$('consoleOut').textContent=''}
 async function listFiles(silent=false){
   if(fileListBusy)return;
