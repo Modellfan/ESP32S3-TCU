@@ -299,6 +299,7 @@ class AppState:
             "uptime_ms": int(payload.get("u", 0) or 0),
             "active_link": "lte" if active == "l" else "wifi",
             "transport": str(payload.get("t", "")),
+            "sleep_state": str(payload.get("s", "awake")),
             "wifi": link(payload.get("w")),
             "lte": link(payload.get("l")),
         }
@@ -785,9 +786,10 @@ function render(){
   $('wifiModeBtn').title=activeLink!=='lte'?'WiFi active':'Switch control plane to WiFi';
   const aliveAge=aliveMsg?(Date.now()/1000-aliveMsg.ts):999;
   const aliveFresh=aliveMsg&&aliveAge<30;
+  const sleepState=(rdm.sleep_state||alive.sleep_state||st.sleep_state||'awake').toLowerCase();
   const alivePct=Math.max(0,Math.min(100,100-(aliveAge/30)*100));
   $('aliveRing').style.setProperty('--p', alivePct);
-  $('aliveText').textContent=aliveFresh?('alive '+aliveAge.toFixed(1)+'s'):'alive timeout';
+  $('aliveText').textContent=sleepState==='sleeping'?'sleeping':(aliveFresh?('alive '+aliveAge.toFixed(1)+'s'):'alive timeout');
   $('serverHttpLocalDot').className=dotClass(!!checks.http_lan?.ok,!!checks.http_lan);
   $('serverHttpPublicDot').className=dotClass(!!checks.http_public?.ok,!!checks.http_public);
   $('serverMqttLocalDot').className=dotClass(!!checks.mqtt_lan?.ok,!!checks.mqtt_lan);
@@ -816,6 +818,7 @@ function render(){
   $('deviceSystem').innerHTML=[
     ['Transport',rdm.transport||st.mqtt_transport||'-'],
     ['Control MQTT',mqttOk?badge(true,'connected'):badge(false,'offline')],
+    ['Sleep',sleepState==='sleeping'?badge(false,'sleeping'):badge(true,sleepState)],
     ['Firmware',rdm.fw_version||ota.fw_version||'-'],
     ['Uptime',fmtUptime(rdm.uptime_ms||st.uptime_ms||alive.uptime_ms)],
     ['SPIFFS',fmtBytes(fs.used)+' / '+fmtBytes(fs.total)]

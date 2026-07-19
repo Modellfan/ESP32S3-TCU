@@ -1,0 +1,11 @@
+{
+  "name": "RemoteDeviceManager",
+  "version": "0.1.0",
+  "description": "MQTT control-plane remote console, file management, and OTA helpers for ESP32 devices.",
+  "keywords": ["esp32", "mqtt", "ota", "remote", "spiffs"],
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"],
+  "build": {
+    "srcDir": "src"
+  }
+}
