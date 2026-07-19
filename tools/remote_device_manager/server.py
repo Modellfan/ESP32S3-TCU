@@ -430,7 +430,6 @@ h1{font-size:22px;margin:0 0 4px}.subtitle{color:var(--muted)}
 pre,.console{margin:0;background:var(--code);color:var(--codeText);border-radius:8px;padding:12px;overflow:auto;white-space:pre-wrap}
 .console{height:470px;font:13px/1.45 Consolas,"Cascadia Mono",monospace}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row.tight{margin-top:10px}
-.file-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:8px;align-items:center;margin-top:10px}
 input[type=text],input:not([type]){height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:white;min-width:0}
 .cmd{flex:1}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:8px;background:white}
 .console-input-wrap{position:relative;flex:1;min-width:240px}.console-input-wrap .cmd{width:100%;box-sizing:border-box}.command-suggestions{position:absolute;left:0;right:0;bottom:42px;z-index:700;background:white;border:1px solid var(--line);border-radius:8px;box-shadow:0 14px 34px rgba(25,39,52,.14);max-height:260px;overflow:auto;padding:6px;display:none}.command-suggestions.show{display:block}.command-suggestion{display:grid;grid-template-columns:minmax(120px,.45fr) minmax(0,1fr);gap:10px;width:100%;border:0;background:transparent;border-radius:6px;padding:8px 9px;text-align:left;cursor:pointer;color:var(--ink)}.command-suggestion:hover,.command-suggestion.active{background:#eef5f7}.command-suggestion code{font-family:Consolas,"Cascadia Mono",monospace;font-weight:700;color:#163040}.command-suggestion span{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -444,7 +443,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
 .map-shell{position:relative;min-height:620px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#dfe7e9}.vehicle-map{height:620px;width:100%}.map-overlay{position:absolute;left:14px;top:14px;z-index:500;display:grid;gap:8px;max-width:320px}.map-card{background:rgba(17,24,32,.92);color:#f7fbfd;border:1px solid #314552;border-radius:8px;padding:11px 12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}.speed-value{font-size:28px;font-weight:750;line-height:1}.speed-unit{color:#9fb0bd;font-size:12px;margin-left:4px}.map-meta{display:grid;gap:4px;color:#c6d4dd;font-size:12px}.vehicle-marker{width:28px;height:28px;border-radius:50%;background:#1fa889;border:3px solid #fff;box-shadow:0 3px 12px rgba(0,0,0,.35);position:relative}.vehicle-marker:after{content:"";position:absolute;left:50%;top:-8px;transform:translateX(-50%);border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid #fff}
 .upload-line{display:grid;grid-template-columns:1fr auto;gap:8px}.file-input{border:1px solid var(--line);border-radius:8px;padding:7px;background:white}.file-input.hidden{display:none}
 .toast{position:fixed;right:18px;bottom:18px;background:#111820;color:white;border-radius:8px;padding:10px 12px;opacity:0;transform:translateY(10px);transition:.18s}.toast.show{opacity:1;transform:translateY(0)}
-@media(max-width:980px){.app{grid-template-columns:1fr}.sidebar{position:static}.metrics{grid-template-columns:repeat(2,minmax(130px,1fr))}.split,.device-grid{grid-template-columns:1fr}.topbar{display:grid}.file-toolbar{grid-template-columns:1fr}}
+@media(max-width:980px){.app{grid-template-columns:1fr}.sidebar{position:static}.metrics{grid-template-columns:repeat(2,minmax(130px,1fr))}.split,.device-grid{grid-template-columns:1fr}.topbar{display:grid}}
 </style>
 </head>
 <body>
@@ -566,11 +565,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
           <span class="file-sync"><span class="sync-ring" id="fileSyncRing"></span><span id="fileSyncText">syncing</span></span>
         </div>
         <div class="drop" id="drop" onclick="$('filePick').click()">Drop files here or click to choose files</div>
-        <div class="file-toolbar">
-          <input class="file-input hidden" type="file" id="filePick" multiple onchange="uploadPickedFiles()">
-          <input id="uploadPath" type="text" placeholder="/optional-target-name.bin">
-          <button class="btn" onclick="$('filePick').click()">Choose files</button>
-        </div>
+        <input class="file-input hidden" type="file" id="filePick" multiple onchange="uploadPickedFiles()">
         <div class="file-grid" id="fileGrid"></div>
       </div>
     </section>
@@ -870,7 +865,7 @@ function uploadFile(file,path){
     xhr.send(file);
   })
 }
-async function uploadPickedFiles(){let files=Array.from($('filePick').files||[]);if(!files.length)return;let typed=$('uploadPath').value.trim();for(let i=0;i<files.length;i++){let target=typed&&files.length===1?typed:('/'+files[i].name);await uploadFile(files[i],target)}$('filePick').value='';$('uploadPath').value=''}
+async function uploadPickedFiles(){let files=Array.from($('filePick').files||[]);if(!files.length)return;for(let f of files)await uploadFile(f,'/'+f.name);$('filePick').value=''}
 function openFileMenu(event,path){event.preventDefault();fileMenuOpenedAt=Date.now();selectedFilePath=path;let m=$('fileMenu');m.style.left=Math.min(event.clientX,window.innerWidth-210)+'px';m.style.top=Math.min(event.clientY,window.innerHeight-130)+'px';m.classList.add('show')}
 function hideFileMenu(){let m=$('fileMenu');if(m)m.classList.remove('show')}
 function startFileLongPress(event,path){clearFileLongPress();if(event.pointerType==='mouse'&&event.button!==0)return;longPressTimer=setTimeout(()=>openFileMenu(event,path),520)}
