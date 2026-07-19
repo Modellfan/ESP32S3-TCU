@@ -251,6 +251,12 @@ class AppState:
         self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
         return payload
 
+    def publish_control(self, suffix: str, payload: dict) -> dict:
+        encoded = json.dumps(payload, separators=(",", ":"))
+        self.mqtt.publish(self.topic(suffix), encoded)
+        self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
+        return payload
+
     def record(self, topic: str, payload: str, retain: bool) -> None:
         try:
             parsed: object = json.loads(payload)
@@ -258,6 +264,8 @@ class AppState:
             parsed = payload
         topic_prefix = self.args.topic_prefix.rstrip("/") + "/"
         suffix = topic.removeprefix(topic_prefix) if topic.startswith(topic_prefix) else topic
+        if suffix == "rdm/alive":
+            parsed = self._normalize_alive(parsed)
         with self.lock:
             self.messages.append({"ts": time.time(), "topic": topic, "payload": parsed, "retain": retain})
             self.messages = self.messages[-200:]
@@ -265,6 +273,35 @@ class AppState:
             if suffix not in {"console/cmd", "fs/jobs", "ota/jobs", "rdm/alive/request", "rdm/transport/set"}:
                 link = self._infer_link_unlocked(parsed)
                 self._add_transfer_unlocked(link, "mqtt", "up", len(payload.encode("utf-8")))
+
+    def _normalize_alive(self, payload: object) -> object:
+        if not isinstance(payload, dict) or "w" not in payload:
+            return payload
+
+        def boolish(value: object) -> bool:
+            return value is True or value == 1 or value == "1"
+
+        def link(raw: object) -> dict[str, object]:
+            src = raw if isinstance(raw, dict) else {}
+            return {
+                "connected": boolish(src.get("c")),
+                "ip": str(src.get("i", "")),
+                "rssi": int(src.get("r", 0) or 0),
+                "mqtt": boolish(src.get("m")),
+                "http": boolish(src.get("h")),
+            }
+
+        active = str(payload.get("a", "w"))
+        return {
+            "schema": "rdm-1",
+            "device_id": self.args.device,
+            "request_id": str(payload.get("r", "")),
+            "uptime_ms": int(payload.get("u", 0) or 0),
+            "active_link": "lte" if active == "l" else "wifi",
+            "transport": str(payload.get("t", "")),
+            "wifi": link(payload.get("w")),
+            "lte": link(payload.get("l")),
+        }
 
     def _infer_link_unlocked(self, payload: object | None = None) -> str:
         if isinstance(payload, dict):
@@ -593,7 +630,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
   <button class="danger" onclick="deleteSelectedFile()">Delete</button>
 </div>
 <script>
-let state={}, activeView='device', localConsole='', pendingTransport=null, pendingTransportUntil=0, vehicleMap=null, vehicleMarker=null;
+let state={}, activeView='device', localConsole='', pendingTransport=null, pendingTransportUntil=0, vehicleMap=null, vehicleMarker=null, lastAliveFullAt=0;
 let uploadItems={}, fileListRequestedAt=0, fileListBusy=false, selectedFilePath='', longPressTimer=null, fileMenuOpenedAt=0;
 const titles={device:['Device','Live remote state over MQTT control plane.'],map:['Map','Vehicle position and speed from GPS telemetry.'],console:['Console','Run firmware commands without opening a serial port.'],files:['Files','SPIFFS file transfer over the RemoteDeviceManager data plane.'],ota:['OTA','Firmware update operations and results.'],trace:['MQTT Trace','Raw controller message buffer.']};
 const consoleCommands=[
@@ -747,8 +784,8 @@ function render(){
   $('lteModeBtn').title=activeLink==='lte'?'LTE active':(lteSwitchReady?'Switch control plane to LTE':'LTE MQTT is not reachable; switch blocked to avoid losing control');
   $('wifiModeBtn').title=activeLink!=='lte'?'WiFi active':'Switch control plane to WiFi';
   const aliveAge=aliveMsg?(Date.now()/1000-aliveMsg.ts):999;
-  const aliveFresh=aliveMsg&&aliveAge<20;
-  const alivePct=Math.max(0,Math.min(100,100-(aliveAge/20)*100));
+  const aliveFresh=aliveMsg&&aliveAge<30;
+  const alivePct=Math.max(0,Math.min(100,100-(aliveAge/30)*100));
   $('aliveRing').style.setProperty('--p', alivePct);
   $('aliveText').textContent=aliveFresh?('alive '+aliveAge.toFixed(1)+'s'):'alive timeout';
   $('serverHttpLocalDot').className=dotClass(!!checks.http_lan?.ok,!!checks.http_lan);
@@ -876,7 +913,7 @@ async function copySelectedFilePath(){if(!selectedFilePath)return;hideFileMenu()
 async function githubOta(){let r=await api('/api/ota/github',{});showToast('GitHub OTA queued: '+r.job_id)}
 async function uploadBin(){let f=$('bin').files[0];if(!f)return;let r=await fetch('/api/ota/upload-bin?name='+encodeURIComponent(f.name),{method:'POST',body:await f.arrayBuffer()});let data=await r.json();showToast('OTA queued: '+data.job_id+' CRC '+data.crc32)}
 function publishStateHint(){api('/api/console',{command:'mqtt status'}).then(r=>showToast('State command queued: '+r.command_id)).catch(e=>showToast(e.message))}
-async function requestAlive(){try{await api('/api/device/alive',{request_id:'alive-'+Date.now()})}catch(e){}}
+async function requestAlive(forceFull=false){try{const now=Date.now(), full=forceFull||now-lastAliveFullAt>60000;if(full)lastAliveFullAt=now;await api('/api/device/alive',{request_id:'a'+now,compact:!full})}catch(e){}}
 async function setDeviceTransport(mode){
   const aliveMsg=latestMessage('rdm/alive'), alive=aliveMsg?aliveMsg.payload:{};
   if(mode==='lte' && !(alive.lte&&alive.lte.mqtt)){
@@ -890,7 +927,7 @@ async function setDeviceTransport(mode){
 document.addEventListener('click',e=>{if(Date.now()-fileMenuOpenedAt<180)return;if(!$('fileMenu').contains(e.target))hideFileMenu()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')hideFileMenu()});
 drop.ondragover=e=>{e.preventDefault();drop.classList.add('drag')};drop.ondragleave=()=>drop.classList.remove('drag');drop.ondrop=async e=>{e.preventDefault();drop.classList.remove('drag');for(let f of e.dataTransfer.files)await uploadFile(f,'/'+f.name);setTimeout(()=>listFiles(true),500)}
-setInterval(refresh,1000);setInterval(requestAlive,2000);setInterval(()=>{if(activeView==='files')listFiles(true)},10000);refresh().then(()=>{requestAlive();listFiles(true)}).catch(e=>showToast(e.message));
+setInterval(refresh,1000);setInterval(requestAlive,10000);setInterval(()=>{if(activeView==='files')listFiles(true)},10000);refresh().then(()=>{requestAlive(true);listFiles(true)}).catch(e=>showToast(e.message));
 </script>
 </body>
 </html>"""
@@ -1037,16 +1074,30 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "job_id": job_id, "crc32": f"{crc:08x}"})
         elif parsed.path == "/api/device/alive":
             data = json.loads(self._body() or b"{}")
-            payload = self.state.publish_job("rdm/alive/request", {
-                "request_id": data.get("request_id", f"alive-{uuid.uuid4().hex[:8]}"),
-                "local_http": self.state.args.local_http_url,
-                "public_http": self.state.args.public_http_url,
-                "local_mqtt_host": self.state.args.local_mqtt_host,
-                "public_mqtt_host": self.state.args.public_mqtt_host,
-                "mqtt_port": self.state.args.mqtt_port,
-                "public_mqtt_port": self.state.args.public_mqtt_port,
-            })
-            self._json({"ok": True, "job_id": payload["job_id"], "request_id": payload["request_id"]})
+            request_id = str(data.get("request_id", f"a{uuid.uuid4().hex[:8]}"))
+            if data.get("compact") is True:
+                payload = self.state.publish_control("rdm/alive/request", {
+                    "request_id": request_id,
+                    "compact": True,
+                    "local_http": self.state.args.local_http_url,
+                    "public_http": self.state.args.public_http_url,
+                    "local_mqtt_host": self.state.args.local_mqtt_host,
+                    "public_mqtt_host": self.state.args.public_mqtt_host,
+                    "mqtt_port": self.state.args.mqtt_port,
+                    "public_mqtt_port": self.state.args.public_mqtt_port,
+                })
+                self._json({"ok": True, "request_id": payload["request_id"], "compact": True})
+            else:
+                payload = self.state.publish_job("rdm/alive/request", {
+                    "request_id": request_id,
+                    "local_http": self.state.args.local_http_url,
+                    "public_http": self.state.args.public_http_url,
+                    "local_mqtt_host": self.state.args.local_mqtt_host,
+                    "public_mqtt_host": self.state.args.public_mqtt_host,
+                    "mqtt_port": self.state.args.mqtt_port,
+                    "public_mqtt_port": self.state.args.public_mqtt_port,
+                })
+                self._json({"ok": True, "job_id": payload["job_id"], "request_id": payload["request_id"], "compact": False})
         elif parsed.path == "/api/device/transport":
             data = json.loads(self._body() or b"{}")
             mode = str(data.get("mode", "wifi")).lower()
