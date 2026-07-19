@@ -104,232 +104,430 @@ Naechste Aktion:
 
 ### HW-01 Boot und Baseline-Telemetrie
 
-Status: not run
-
-Ziel: Nach Flash oder Power-Cycle publiziert das Device `status`,
-`rdm/state`, `fs/state`, `ota/state` und optional `gps`.
-
-Automatisierbar: Teilautomatisch. Flash und Reset koennen automatisiert werden,
-die Spannungsversorgung und physische Verkabelung bleiben hardwareabhaengig.
+Status: pass
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: wifi-mqtt
+Setup: Laufendes Device ueber RemoteDeviceManager WebUI/API, kein frischer
+Power-Cycle in diesem Lauf.
+Schritte: `/api/state` gelesen und retained Topics geprueft.
+Erwartung: `status`, `rdm/state`, `fs/state`, `ota/state`, `console/state` und
+`gps` sind vorhanden.
+Beobachtung: Status vorhanden; IP `192.168.0.86`, RSSI `-71 dBm`,
+`mqtt_connected=true`, Firmware `dev`, GPS Power seen `true`.
+Logs/Links: `/api/state`, `eboxster/status`, `eboxster/rdm/state`.
+Naechste Aktion: Test bei Bedarf nach definiertem Power-Cycle wiederholen.
 
 ### HW-02 WiFi MQTT Control Plane
 
-Status: not run
-
-Ziel: Device verbindet ueber WiFi zum NanoMQ Broker, subscribed auf Control
-Topics und publiziert Status/Alive-Antworten.
-
-Automatisierbar: Automatisch ueber MQTT-Client und `/api/state`.
+Status: pass
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi
+Setup: NanoMQ lokal auf `1883`, RemoteDeviceManager Tool auf `8093`.
+Schritte: `/api/device/alive` mit Request `hw-alive-1784424361` publiziert und
+`eboxster/rdm/alive` ausgewertet.
+Erwartung: WiFi ist verbunden, MQTT ist erreichbar.
+Beobachtung: WiFi `connected=true`, IP `192.168.0.86`, RSSI `-71 dBm`,
+`mqtt=true`.
+Logs/Links: `eboxster/rdm/alive`.
+Naechste Aktion: In Langzeittest auf Reconnect-Stabilitaet pruefen.
 
 ### HW-03 LTE MQTT Control Plane
 
-Status: not run
-
-Ziel: Device nutzt native SIMCom MQTT API und erreicht den Broker ueber den
-oeffentlichen Endpoint.
-
-Automatisierbar: Teilautomatisch. Skript kann Topic-Antworten messen, LTE
-Abdeckung, SIM und Provider-Routing muessen real vorhanden sein.
+Status: fail
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: LTE
+Setup: Device meldet LTE IP `10.165.104.4`; Public MQTT Endpoint
+`eboxster.duckdns.org:8093` ist vom Backend aus erreichbar.
+Schritte: Alive Response ausgewertet.
+Erwartung: LTE `mqtt=true`.
+Beobachtung: LTE `connected=true`, IP `10.165.104.4`, aber `mqtt=false`.
+Logs/Links: Alive Payload `lte: { connected: true, ip: "10.165.104.4",
+mqtt: false, http: false }`.
+Naechste Aktion: SIMCom native MQTT Pfad und Provider/Public-Port Routing auf
+dem Device debuggen.
 
 ### HW-04 WiFi HTTP Data Plane
 
-Status: not run
-
-Ziel: Device kann HTTP GET/PUT gegen die LAN-Adresse des Python-Tools ausfuehren.
-
-Automatisierbar: Automatisch ueber File Upload/Download Jobs.
+Status: pass
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi
+Setup: RemoteDeviceManager HTTP `192.168.0.37:8093`.
+Schritte: Alive HTTP Check und Backend HTTP Check ausgewertet.
+Erwartung: WiFi HTTP Check ist true.
+Beobachtung: Alive meldet WiFi `http=true`; Backend HTTP LAN Check meldet
+`200`.
+Logs/Links: `/api/state.server_checks.http_lan`, `/api/state.retained.rdm/alive`.
+Naechste Aktion: File-Jobs separat reparieren, da HW-10/HW-11 trotz HTTP Check
+fehlgeschlagen sind.
 
 ### HW-05 LTE HTTP Data Plane
 
-Status: not run
-
-Ziel: Device kann HTTP GET/PUT gegen den Public Endpoint des Python-Tools
-ausfuehren.
-
-Automatisierbar: Teilautomatisch. Der Test ist skriptbar, aber Portfreigabe,
-IPv4/IPv6 Exposure und Mobilfunkrouting sind externe Voraussetzungen.
+Status: fail
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: LTE
+Setup: Public HTTP `eboxster.duckdns.org:8093` ist vom Backend aus mit `200`
+erreichbar.
+Schritte: Alive Response ausgewertet.
+Erwartung: LTE HTTP Check ist true.
+Beobachtung: LTE `connected=true`, aber `http=false`.
+Logs/Links: Alive Payload und `/api/state.server_checks.http_public`.
+Naechste Aktion: Device-seitige LTE HTTP Probe gegen Public Endpoint debuggen.
 
 ### HW-06 Alive Polling beider Links
 
-Status: not run
-
-Ziel: Alive Request/Response liefert getrennte WiFi- und LTE-Informationen fuer
-MQTT und HTTP, auch wenn nur einer der Links aktiv fuer die Control Plane ist.
-
-Automatisierbar: Automatisch ueber `rdm/alive/request`, `rdm/alive` und WebUI
-DOM/API Checks.
+Status: pass
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: active WiFi, LTE separately checked
+Setup: RemoteDeviceManager WebUI pollt Alive alle 2 Sekunden.
+Schritte: Manuelle Alive Request `hw-alive-1784424361` gesendet.
+Erwartung: Antwort enthaelt getrennte `wifi` und `lte` Objekte.
+Beobachtung: Antwort enthaelt `wifi.connected=true`, `wifi.mqtt=true`,
+`wifi.http=true`, `lte.connected=true`, `lte.mqtt=false`, `lte.http=false`.
+Logs/Links: `eboxster/rdm/alive`.
+Naechste Aktion: LTE Checks reparieren, aber Alive-Struktur ist korrekt.
 
 ### HW-07 Transport Umschalten
 
-Status: not run
-
-Ziel: Umschalten zwischen WiFi und LTE wird quittiert, der aktive Link wechselt
-und die WebUI bleibt bedienbar.
-
-Automatisierbar: Teilautomatisch. MQTT Job und Alive-Verifikation sind
-automatisch, ein fehlschlagender LTE-Link kann manuelle Diagnose erfordern.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi -> LTE geplant
+Setup: WebUI/API blockiert LTE Switch, wenn LTE MQTT nicht erreichbar ist.
+Schritte: Vortest HW-03 ausgewertet.
+Erwartung: LTE MQTT muss true sein, bevor sicher umgeschaltet wird.
+Beobachtung: LTE MQTT ist false; Umschalten wurde nicht erzwungen, um die
+Control Plane nicht zu verlieren.
+Logs/Links: Alive Payload `lte.mqtt=false`.
+Naechste Aktion: Nach HW-03 Fix erneut testen; nur mit `force` testen, wenn
+Fallback ueber USB bereitsteht.
 
 ### HW-08 MQTT Console
 
-Status: not run
-
-Ziel: Console-Kommandos wie `help`, `mqtt status`, `wifi status`, `gps status`
-werden ueber MQTT ausgefuehrt und Ausgabe erscheint in der WebUI.
-
-Automatisierbar: Automatisch ueber `/api/console` und `console/out`.
+Status: pass
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi MQTT
+Setup: Commands ueber `POST /api/console`.
+Schritte: `help`, `mqtt status`, `wifi status`, `gps status` ausgefuehrt und
+`console/out final=true` abgewartet.
+Erwartung: Alle Kommandos liefern Exit-Code `0`.
+Beobachtung: Alle vier Kommandos Exit-Code `0`; `mqtt status` meldet native
+cellular MQTT enabled, `wifi status` meldet IP `192.168.0.86`.
+Logs/Links: `eboxster/console/out` fuer die vier getesteten Command-IDs.
+Naechste Aktion: Weitere Kommandos in automatisierten Regressionstest aufnehmen.
 
 ### HW-09 SPIFFS List
 
-Status: not run
-
-Ziel: `list` Job liefert die aktuelle SPIFFS Struktur und die WebUI zeigt sie
-als Datei-Icons.
-
-Automatisierbar: Automatisch ueber `/api/files/list`.
+Status: pass
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi MQTT Control
+Setup: File list ueber `POST /api/files/list`.
+Schritte: `fs/jobs` op `list` gesendet und `fs/result` abgewartet.
+Erwartung: `status=ok` und Dateiliste.
+Beobachtung: `status=ok`; Dateien: `/devices.json` 3917 B, `/server.pem`
+3562 B, `/setting.json` 2238 B.
+Logs/Links: `eboxster/fs/result` Job `job-8431d2dacd11`.
+Naechste Aktion: SPIFFS `used/total` Werte pruefen, da `fs/state` aktuell
+`0 / 0` meldet.
 
 ### HW-10 SPIFFS Upload
 
-Status: not run
-
-Ziel: Datei wird im Tool gehostet, Device laedt sie per HTTP GET und schreibt sie
-nach SPIFFS.
-
-Automatisierbar: Automatisch. Erfolgsnachweis per `fs/result`, anschliessendem
-`list` und optionalem Download-Vergleich.
+Status: fail
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi MQTT Control, HTTP Data Plane
+Setup: Testdatei `/rdm-hw-test-1784424361.txt`, 61 B, CRC32 `5fb68733`.
+Schritte: `POST /api/files/upload?path=/rdm-hw-test-1784424361.txt` gesendet
+und `fs/result` fuer Job `job-cf9e849b657c` abgewartet.
+Erwartung: `put_url` endet mit `status=ok`.
+Beobachtung: `put_url` endet mit `status=failed`, Detail `download_failed`.
+Datei erscheint danach nicht in `list`.
+Logs/Links: `eboxster/fs/result` Job `job-cf9e849b657c`.
+Naechste Aktion: Device HTTP GET Pfad fuer gehostete Dateien debuggen; besonders
+Host/Port/Public-Base-URL und HTTP-Client-Portbehandlung pruefen.
 
 ### HW-11 SPIFFS Download
 
-Status: not run
-
-Ziel: Device laedt eine SPIFFS-Datei per HTTP PUT zum Tool hoch.
-
-Automatisierbar: Automatisch. Erfolgsnachweis per `fs/result` und Byte-/CRC-
-Vergleich der Upload-Datei.
+Status: fail
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi MQTT Control, HTTP Data Plane
+Setup: Downloadversuch fuer Testdatei `/rdm-hw-test-1784424361.txt`.
+Schritte: `POST /api/files/download` gesendet und `fs/result` fuer Job
+`job-ff21b2707578` abgewartet.
+Erwartung: `get_url` endet mit `status=ok`, lokale Upload-Datei entspricht
+Original.
+Beobachtung: `get_url` endet mit `status=failed`, Detail `upload_failed`;
+lokale Datei hat 0 B und passt nicht zur Testdatei.
+Logs/Links: `eboxster/fs/result` Job `job-ff21b2707578`.
+Naechste Aktion: Device HTTP PUT Pfad und Ziel-URL pruefen; HW-10 muss zuerst
+stabil werden.
 
 ### HW-12 SPIFFS Delete
 
-Status: not run
-
-Ziel: Normale Dateien koennen geloescht werden, `/`, Pfade mit `..` und
-geschuetzte Pfade werden abgelehnt.
-
-Automatisierbar: Automatisch ueber Delete-Jobs und Listen-Vergleich.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi MQTT Control
+Setup: Safe Delete sollte die vorher hochgeladene Testdatei loeschen.
+Schritte: Delete fuer `/rdm-hw-test-1784424361.txt` gesendet.
+Erwartung: Normale Testdatei wird geloescht.
+Beobachtung: Upload in HW-10 ist fehlgeschlagen, daher existierte keine sichere
+Testdatei. Delete Job `job-f41a17509094` meldete `status=failed`,
+`detail=delete_failed`.
+Logs/Links: `eboxster/fs/result` Job `job-f41a17509094`.
+Naechste Aktion: Nach erfolgreichem Upload erneut testen; keine bestehenden
+Produktivdateien fuer Delete-Test verwenden.
 
 ### HW-13 Filesystem Fehlerfaelle
 
-Status: not run
-
-Ziel: Volles SPIFFS, fehlende Dateien, ungueltige Pfade und HTTP-Fehler liefern
-saubere Fehler und blockieren die Loop nicht.
-
-Automatisierbar: Automatisch, sofern Testdateien und erwartete Fehlerfaelle
-skriptgesteuert erzeugt werden.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi/LTE geplant
+Setup: Fehlerfalltests benoetigen funktionierende Basisoperationen.
+Schritte: Vortests HW-10 bis HW-12 ausgewertet.
+Erwartung: Fehlerfaelle werden nach erfolgreichem Basis-Upload/Download
+gezielt erzeugt.
+Beobachtung: Basisoperationen Upload/Download sind fehlgeschlagen; voller
+Speicher und Schutzpfade wurden nicht getestet.
+Logs/Links: HW-10, HW-11, HW-12.
+Naechste Aktion: Nach Fix der HTTP File Data Plane automatisierte
+Negativtests ergaenzen.
 
 ### HW-14 Lokale OTA mit CRC OK
 
-Status: not run
-
-Ziel: Lokale `.bin` wird hochgeladen, CRC32 wird berechnet, Device verifiziert
-die CRC und bootet anschliessend in die neue Firmware.
-
-Automatisierbar: Teilautomatisch. Upload und Job sind skriptbar; Boot, Version
-und Erreichbarkeit nach Reset muessen gemessen werden.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi/LTE geplant
+Setup: OTA waere veraendernd und fuehrt Reboot/Flash aus.
+Schritte: Build erzeugt Firmware erfolgreich; OTA Job nicht gestartet.
+Erwartung: Nur mit expliziter Freigabe und Recovery-Pfad ausfuehren.
+Beobachtung: Build `pio run -e tcall_a7670_v1_0` erfolgreich; keine lokale OTA
+ausgefuehrt.
+Logs/Links: PlatformIO Build SUCCESS, Flash 74.2 %, RAM 15.8 %.
+Naechste Aktion: Nach Freigabe `.bin` hochladen, CRC dokumentieren und
+Version nach Reboot pruefen.
 
 ### HW-15 Lokale OTA mit CRC Fehler
 
-Status: not run
-
-Ziel: Manipulierte oder falsche CRC verhindert Flash und Device bleibt auf der
-alten Firmware.
-
-Automatisierbar: Automatisch ueber absichtlich falschen CRC-Job und
-Versionsvergleich.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi/LTE geplant
+Setup: OTA-Negativtest benoetigt kontrollierten OTA-Job ohne Risiko fuer
+Produktivfirmware.
+Schritte: Nicht ausgefuehrt.
+Erwartung: Falsche CRC fuehrt zu `status=failed` ohne Flash.
+Beobachtung: Test wurde nicht gestartet, weil OTA-Jobs veraendernd sind und
+HW-10/HW-11 HTTP Data Plane aktuell fehlschlagen.
+Logs/Links: HW-10, HW-11.
+Naechste Aktion: Nach HTTP Data Plane Fix und expliziter OTA-Freigabe testen.
 
 ### HW-16 GitHub Latest OTA
 
-Status: not run
-
-Ziel: Device findet das neueste Release `.bin`, laedt es, prueft CRC/Metadaten
-und flasht erfolgreich.
-
-Automatisierbar: Teilautomatisch. GitHub Release Erstellung kann per `gh`
-automatisiert werden, der Hardware-Reboot und die finale Erreichbarkeit bleiben
-Integrationstest.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: LTE/WiFi geplant
+Setup: GitHub OTA veraendert Firmware und rebootet.
+Schritte: Nicht ausgefuehrt.
+Erwartung: Freigegebener Release-Stand wird geflasht und nach Reboot gemeldet.
+Beobachtung: Nicht gestartet, weil keine explizite Freigabe fuer erneuten OTA in
+diesem Testlauf vorlag und LTE HTTP/MQTT aktuell failt.
+Logs/Links: HW-03, HW-05.
+Naechste Aktion: Nach LTE/HTTP Fix und Release-Freigabe ausfuehren.
 
 ### HW-17 OTA Recovery
 
-Status: not run
-
-Ziel: Reset, Stromverlust oder Netzwerkabbruch waehrend OTA fuehrt nicht zu
-einem dauerhaft nicht bootenden Device.
-
-Automatisierbar: Manuell. Power-Cut und Timing muessen bewusst und mit
-geeigneter Hardware durchgefuehrt werden.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi/LTE geplant
+Setup: Erfordert absichtlichen Reset/Stromverlust waehrend OTA.
+Schritte: Nicht ausgefuehrt.
+Erwartung: Device bleibt bootfaehig oder rollt sauber zurueck.
+Beobachtung: Ohne schaltbare Versorgung/Recovery-Plan nicht sicher
+durchfuehrbar.
+Logs/Links: Keine.
+Naechste Aktion: Mit Labornetzteil oder steuerbarer Steckdose und serieller
+Recovery-Konsole planen.
 
 ### HW-18 Broker Ausfall
 
-Status: not run
-
-Ziel: Stop von NanoMQ oder Public Broker fuehrt zu Offline-Status, Reconnect und
-erneuter Subscription nach Broker-Rueckkehr.
-
-Automatisierbar: Teilautomatisch. Broker Stop/Start ist skriptbar, LTE Public
-Routing kann externe Effekte haben.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi/LTE geplant
+Setup: NanoMQ lief auf Port `1883`; RemoteDeviceManager Tool nutzte denselben
+Broker.
+Schritte: Nicht ausgefuehrt, weil Stop von NanoMQ die laufende Testsession und
+Device Control Plane unterbrechen wuerde.
+Erwartung: Nach Broker Stop/Start reconnectet das Device.
+Beobachtung: Backend Server Checks fuer MQTT LAN und Public waren `connack`.
+Logs/Links: `/api/state.server_checks.mqtt_lan`, `.mqtt_public`.
+Naechste Aktion: In separatem Reconnect-Testfenster mit automatischem
+Broker-Restart ausfuehren.
 
 ### HW-19 HTTP Server Ausfall
 
-Status: not run
-
-Ziel: Wenn das Python HTTP Tool nicht erreichbar ist, melden File-/OTA-Jobs
-einen Fehler und das Device bleibt responsiv.
-
-Automatisierbar: Automatisch durch Stoppen des HTTP Servers und Job-Auswertung.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi/LTE geplant
+Setup: HTTP Server lief auf Port `8093`.
+Schritte: Nicht ausgefuehrt, um die laufende WebUI/API-Testsession nicht
+abzubrechen.
+Erwartung: Jobs melden Fehler und Device bleibt responsiv.
+Beobachtung: HTTP LAN/Public Checks waren beide `200`.
+Logs/Links: `/api/state.server_checks.http_lan`, `.http_public`.
+Naechste Aktion: In separatem Testlauf mit Watchdog-Skript ausfuehren.
 
 ### HW-20 LTE Netzverlust
 
-Status: not run
-
-Ziel: LTE Signalverlust, APN-Fehler oder SIM-Probleme werden erkannt; nach
-Rueckkehr verbindet sich das Device erneut.
-
-Automatisierbar: Manuell. Netzverlust ist hardware-/providerabhaengig; Messung
-der Recovery kann danach automatisiert erfolgen.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: LTE
+Setup: LTE war verbunden, aber MQTT/HTTP ueber LTE nicht erfolgreich.
+Schritte: Kein Antennen-/SIM-/Providerverlust provoziert.
+Erwartung: Netzverlust und Recovery werden sauber erkannt.
+Beobachtung: Nicht getestet; LTE Basis ist bereits teilweise fehlerhaft
+(`mqtt=false`, `http=false`).
+Logs/Links: HW-03, HW-05.
+Naechste Aktion: Erst LTE Data Plane stabilisieren, dann Netzverlust testen.
 
 ### HW-21 Power Cycle und Retained State
 
-Status: not run
-
-Ziel: Nach Neustart publiziert das Device wieder konsistente retained States und
-die WebUI zeigt keine alten falschen Werte als aktuell an.
-
-Automatisierbar: Teilautomatisch mit schaltbarer Steckdose oder Labornetzteil.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi/LTE geplant
+Setup: Kein steuerbarer Power-Cycle in diesem Lauf genutzt.
+Schritte: Nicht ausgefuehrt.
+Erwartung: Nach Power-Cycle werden retained States neu und plausibel
+publiziert.
+Beobachtung: Laufender Zustand ist plausibel, aber kein Power-Cycle-Nachweis.
+Logs/Links: HW-01.
+Naechste Aktion: Mit steuerbarer Versorgung wiederholen.
 
 ### HW-22 GNSS/Map Telemetrie
 
-Status: not run
-
-Ziel: GNSS Fix, Position, Satelliten und Geschwindigkeit werden publiziert und in
-der Map angezeigt.
-
-Automatisierbar: Teilautomatisch. Datenpruefung ist automatisch, echter Fix oder
-Bewegung braucht reale Umgebung oder GNSS-Simulator.
+Status: fail
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi MQTT, GNSS
+Setup: GPS Status ueber Console und `eboxster/gps` ausgewertet.
+Schritte: `gps status` ausgefuehrt und GPS retained Payload gelesen.
+Erwartung: `has_fix=true`, Position und Geschwindigkeit plausibel.
+Beobachtung: `gps status` Exit-Code `0`, aber `GNSS raw: ,,,,,,,,`;
+`valid=false`, `has_fix=false`, `sat_total=0`, Geschwindigkeit `0.0`.
+Logs/Links: `eboxster/gps`, Console Output `gps status`.
+Naechste Aktion: GNSS Antenne/Position/Freifeld oder Simulator pruefen.
 
 ### HW-23 Langzeittest
 
-Status: not run
-
-Ziel: 12-24 Stunden Betrieb mit regelmaessigen Alive, File-Listen und Console-
-Kommandos ohne Heap-Abfall, Watchdog Reset oder Verbindungsverlust.
-
-Automatisierbar: Teilautomatisch. Skript kann messen und Logs sammeln; Hardware
-muss dauerhaft stabil versorgt und online bleiben.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: WiFi/LTE geplant
+Setup: Kurztest lief wenige Minuten, kein 12-24 h Fenster.
+Schritte: Nicht ausgefuehrt.
+Erwartung: Langzeitbetrieb ohne Reconnect-/Heap-/Watchdog-Probleme.
+Beobachtung: Fuer diesen Lauf nicht lang genug gemessen.
+Logs/Links: Kurztest-Messung ueber `/api/state`, `rdm/alive`,
+`console/out` und `fs/result`.
+Naechste Aktion: Separates Dauertestskript ueber Nacht starten.
 
 ### HW-24 Versorgung/Brownout
 
-Status: not run
-
-Ziel: Unterspannung und Versorgungseinbrueche fuehren nicht zu korruptem
-Filesystem, haengendem Modem oder defektem OTA-Zustand.
-
-Automatisierbar: Manuell. Benoetigt Labornetzteil, definierte Lastprofile und
-kontrollierte Brownout-Szenarien.
+Status: blocked
+Datum: 2026-07-19 03:24 +02:00
+Branch: feature/remote-device-manager
+Commit: 0f70bda
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: Power
+Setup: Kein Labornetzteil-/Brownout-Profil in diesem Lauf.
+Schritte: Nicht ausgefuehrt.
+Erwartung: Unterspannung erzeugt keinen korrupten FS-/OTA-Zustand.
+Beobachtung: Nicht getestet.
+Logs/Links: Keine.
+Naechste Aktion: Mit Labornetzteil, Strommessung und serieller Konsole planen.
