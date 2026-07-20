@@ -429,7 +429,7 @@ HTML = r"""<!doctype html>
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",Arial,sans-serif}
 button,input{font:inherit}
 .app{display:block;min-height:100vh}
-.sidebar{position:fixed;right:0;top:0;bottom:0;z-index:800;width:74px;background:var(--nav);color:white;padding:18px 10px;display:flex;flex-direction:column;gap:16px;overflow:hidden;box-shadow:-10px 0 28px rgba(17,24,32,.12);transition:width .18s ease,padding .18s ease}
+.sidebar{position:fixed;left:0;top:0;bottom:0;z-index:800;width:74px;background:var(--nav);color:white;padding:18px 10px;display:flex;flex-direction:column;gap:16px;overflow:hidden;box-shadow:10px 0 28px rgba(17,24,32,.12);transition:width .18s ease,padding .18s ease}
 .sidebar:hover,.sidebar:focus-within{width:360px;padding:18px 14px;overflow-y:auto}
 .brand{display:flex;align-items:center;gap:12px;padding:2px 4px 12px;border-bottom:1px solid #2b3842;min-width:332px}
 .brand img{width:42px;height:42px;flex:0 0 auto}.brand b{display:block;font-size:16px}.brand span{color:#9fb0bd;font-size:12px}
@@ -459,7 +459,7 @@ button,input{font:inherit}
 .lane-stats span{border:1px solid #2f4351;background:#101922;border-radius:999px;padding:3px 6px;text-align:center;white-space:nowrap}
 .lane-stats b{color:#eef4f8;font-family:Consolas,"Cascadia Mono",monospace;font-weight:650}
 .dot{width:9px;height:9px;border-radius:50%;background:#526575;display:inline-block}.dot.ok{background:var(--teal)}.dot.warn{background:var(--amber)}.dot.err{background:var(--red)}
-.main{min-width:0;padding:24px 102px 32px 28px}
+.main{min-width:0;padding:24px 28px 32px 102px}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px}
 h1{font-size:22px;margin:0 0 4px}.subtitle{color:var(--muted)}
 .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;height:36px;padding:0 12px;cursor:pointer}
