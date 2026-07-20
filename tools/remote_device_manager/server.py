@@ -428,13 +428,17 @@ HTML = r"""<!doctype html>
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",Arial,sans-serif}
 button,input{font:inherit}
-.app{display:grid;grid-template-columns:360px 1fr;min-height:100vh}
-.sidebar{background:var(--nav);color:white;padding:18px 14px;display:flex;flex-direction:column;gap:16px}
-.brand{display:flex;align-items:center;gap:12px;padding:2px 4px 12px;border-bottom:1px solid #2b3842}
-.brand img{width:42px;height:42px}.brand b{display:block;font-size:16px}.brand span{color:#9fb0bd;font-size:12px}
-.nav{display:grid;gap:6px}.nav button{height:42px;text-align:left;border:0;border-radius:8px;background:transparent;color:#cbd6de;padding:0 12px;cursor:pointer}
-.nav button.active,.nav button:hover{background:var(--nav2);color:white}
-.link-map{display:grid;gap:12px}
+.app{display:block;min-height:100vh}
+.sidebar{position:fixed;right:0;top:0;bottom:0;z-index:800;width:74px;background:var(--nav);color:white;padding:18px 10px;display:flex;flex-direction:column;gap:16px;overflow:hidden;box-shadow:-10px 0 28px rgba(17,24,32,.12);transition:width .18s ease,padding .18s ease}
+.sidebar:hover,.sidebar:focus-within{width:360px;padding:18px 14px;overflow-y:auto}
+.brand{display:flex;align-items:center;gap:12px;padding:2px 4px 12px;border-bottom:1px solid #2b3842;min-width:332px}
+.brand img{width:42px;height:42px;flex:0 0 auto}.brand b{display:block;font-size:16px}.brand span{color:#9fb0bd;font-size:12px}
+.brand>div,.nav-label,.link-map{opacity:0;visibility:hidden;transition:opacity .12s ease,visibility .12s ease}
+.sidebar:hover .brand>div,.sidebar:focus-within .brand>div,.sidebar:hover .nav-label,.sidebar:focus-within .nav-label,.sidebar:hover .link-map,.sidebar:focus-within .link-map{opacity:1;visibility:visible}
+.nav{display:grid;gap:6px}.nav button{height:44px;display:grid;grid-template-columns:42px 1fr;align-items:center;gap:8px;text-align:left;border:0;border-radius:8px;background:transparent;color:#cbd6de;padding:0 8px 0 6px;cursor:pointer;min-width:52px}
+.nav button.active,.nav button:hover,.nav button:focus-visible{background:var(--nav2);color:white;outline:0}
+.nav-icon{width:22px;height:22px;justify-self:center;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}.nav-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.link-map{display:grid;gap:12px;min-width:332px}
 .node-card{background:#18232c;border:1px solid #2b3842;border-radius:10px;padding:14px;display:grid;gap:12px}
 .node-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .node-kicker{color:#8fa1ae;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
@@ -455,7 +459,7 @@ button,input{font:inherit}
 .lane-stats span{border:1px solid #2f4351;background:#101922;border-radius:999px;padding:3px 6px;text-align:center;white-space:nowrap}
 .lane-stats b{color:#eef4f8;font-family:Consolas,"Cascadia Mono",monospace;font-weight:650}
 .dot{width:9px;height:9px;border-radius:50%;background:#526575;display:inline-block}.dot.ok{background:var(--teal)}.dot.warn{background:var(--amber)}.dot.err{background:var(--red)}
-.main{min-width:0;padding:24px 28px 32px}
+.main{min-width:0;padding:24px 102px 32px 28px}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px}
 h1{font-size:22px;margin:0 0 4px}.subtitle{color:var(--muted)}
 .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;height:36px;padding:0 12px;cursor:pointer}
@@ -481,20 +485,28 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
 .map-shell{position:relative;min-height:620px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#dfe7e9}.vehicle-map{height:620px;width:100%}.map-overlay{position:absolute;right:14px;top:14px;z-index:500;display:grid;gap:8px;width:min(320px,calc(100% - 92px));max-width:320px}.map-card{background:rgba(17,24,32,.92);color:#f7fbfd;border:1px solid #314552;border-radius:8px;padding:11px 12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}.speed-value{font-size:28px;font-weight:750;line-height:1}.speed-unit{color:#9fb0bd;font-size:12px;margin-left:4px}.map-meta{display:grid;gap:4px;color:#c6d4dd;font-size:12px}.vehicle-marker{width:28px;height:28px;border-radius:50%;background:#1fa889;border:3px solid #fff;box-shadow:0 3px 12px rgba(0,0,0,.35);position:relative}.vehicle-marker:after{content:"";position:absolute;left:50%;top:-8px;transform:translateX(-50%);border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid #fff}
 .upload-line{display:grid;grid-template-columns:1fr auto;gap:8px}.file-input{border:1px solid var(--line);border-radius:8px;padding:7px;background:white}.file-input.hidden{display:none}
 .toast{position:fixed;right:18px;bottom:18px;background:#111820;color:white;border-radius:8px;padding:10px 12px;opacity:0;transform:translateY(10px);transition:.18s}.toast.show{opacity:1;transform:translateY(0)}
-@media(max-width:980px){.app{grid-template-columns:1fr}.sidebar{position:static}.metrics{grid-template-columns:repeat(2,minmax(130px,1fr))}.split,.device-grid{grid-template-columns:1fr}.topbar{display:grid}}
+@media(max-width:980px){.main{padding:18px 16px 88px}.sidebar{left:0;right:0;top:auto;bottom:0;width:auto;height:64px;padding:7px 8px;display:block;overflow:visible;box-shadow:0 -8px 24px rgba(17,24,32,.16)}.sidebar:hover,.sidebar:focus-within{width:auto;height:64px;padding:7px 8px;overflow:visible}.brand,.link-map{display:none}.nav{height:50px;display:grid;grid-template-columns:repeat(6,1fr);gap:4px}.nav button{height:50px;min-width:0;display:grid;grid-template-columns:1fr;place-items:center;padding:0;border-radius:9px}.nav-icon{width:23px;height:23px}.nav-label{display:none}.metrics{grid-template-columns:repeat(2,minmax(130px,1fr))}.split,.device-grid{grid-template-columns:1fr}.topbar{display:grid}}
 </style>
 </head>
 <body>
+<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+  <symbol id="icon-device" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 7h4M10 17h4"/></symbol>
+  <symbol id="icon-map" viewBox="0 0 24 24"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15M15 6v15"/></symbol>
+  <symbol id="icon-console" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12 15h5"/></symbol>
+  <symbol id="icon-files" viewBox="0 0 24 24"><path d="M4 20h16V8h-8l-2-3H4z"/><path d="M4 8h16"/></symbol>
+  <symbol id="icon-ota" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M5 19h14"/></symbol>
+  <symbol id="icon-trace" viewBox="0 0 24 24"><path d="M4 7h4l2 10 4-14 2 8h4"/><path d="M4 19h16"/></symbol>
+</svg>
 <div class="app">
   <aside class="sidebar">
     <div class="brand"><img src="/assets/rdm-icon.svg" alt=""><div><b>RemoteDeviceManager</b><span id="brandDevice">eboxster</span></div></div>
     <nav class="nav" aria-label="Main">
-      <button class="active" data-view="device">Device</button>
-      <button data-view="map">Map</button>
-      <button data-view="console">Console</button>
-      <button data-view="files">Files</button>
-      <button data-view="ota">OTA</button>
-      <button data-view="trace">MQTT Trace</button>
+      <button class="active" data-view="device" title="Device"><svg class="nav-icon"><use href="#icon-device"></use></svg><span class="nav-label">Device</span></button>
+      <button data-view="map" title="Map"><svg class="nav-icon"><use href="#icon-map"></use></svg><span class="nav-label">Map</span></button>
+      <button data-view="console" title="Console"><svg class="nav-icon"><use href="#icon-console"></use></svg><span class="nav-label">Console</span></button>
+      <button data-view="files" title="Files"><svg class="nav-icon"><use href="#icon-files"></use></svg><span class="nav-label">Files</span></button>
+      <button data-view="ota" title="OTA"><svg class="nav-icon"><use href="#icon-ota"></use></svg><span class="nav-label">OTA</span></button>
+      <button data-view="trace" title="MQTT Trace"><svg class="nav-icon"><use href="#icon-trace"></use></svg><span class="nav-label">MQTT Trace</span></button>
     </nav>
     <section class="link-map" aria-label="Connection overview">
       <div class="node-card">
