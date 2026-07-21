@@ -6,21 +6,29 @@
 #define TCALL_WIFI_SSID "your-wifi-ssid"
 #define TCALL_WIFI_PASSWORD "your-wifi-password"
 #define TCALL_OTA_HOSTNAME "tcall-a7670-v10"
+#define TCALL_DEVICE_ID "eboxster"
 
 #define TCALL_SIM_PIN ""
 
 #define TCALL_APN "your-apn"
 #define TCALL_APN_USER "your-apn-user"
 #define TCALL_APN_PASS "your-apn-password"
+#define TCALL_PDP_TYPE "IPV4V6"
 
 #define TCALL_MQTT_HOST "192.168.1.10"
+#define TCALL_MQTT_CELLULAR_HOST TCALL_MQTT_HOST
+#define TCALL_MQTT_CELLULAR_PORT TCALL_MQTT_PORT
+#define TCALL_MQTT_CELLULAR_NATIVE 1
 #define TCALL_MQTT_TRANSPORT "wifi"  // "wifi" or "cellular"
 #define TCALL_MQTT_PORT 1883
 #define TCALL_MQTT_USER ""
 #define TCALL_MQTT_PASS ""
-#define TCALL_MQTT_CLIENT_ID "tcall-a7670-v10"
-#define TCALL_MQTT_TOPIC_PREFIX "tcall/a7670/v10"
+#define TCALL_MQTT_CLIENT_ID "eboxster"
+#define TCALL_MQTT_TOPIC_PREFIX "eboxster"
 #define TCALL_MQTT_PUBLISH_INTERVAL_MS 10000UL
+#define TCALL_REMOTE_DEVICE_MANAGER_ENABLED 1
+#define TCALL_RDM_LTE_ALIVE_AUTOSTART 1
+#define TCALL_FW_VERSION "dev"
 
 #define TCALL_GPS_AUTOSTART 0
 

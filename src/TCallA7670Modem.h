@@ -85,6 +85,22 @@ class TCallA7670Modem {
   String localIP();
   Client& cellularClient();
   Client& cellularSecureClient();
+  bool tcpProbe(const char* host, uint16_t port, uint8_t timeoutSeconds, Stream& out);
+  bool mqttBegin(bool ssl, Stream* log = nullptr);
+  bool mqttConnect(const char* server,
+                   uint16_t port,
+                   const char* clientId,
+                   const char* user,
+                   const char* pass,
+                   Stream* log = nullptr);
+  bool mqttPublish(const char* topic,
+                   const char* payload,
+                   bool retain,
+                   Stream* log = nullptr);
+  bool mqttSubscribe(const char* topic, Stream* log = nullptr);
+  void mqttSetCallback(void (*callback)(const char* topic, const uint8_t* payload, uint32_t len));
+  bool mqttHandle(uint32_t timeoutMs = 10);
+  bool mqttDisconnect(Stream* log = nullptr);
   bool httpGet(const char* host, const char* path, uint16_t port, Stream& out);
   String listSms(const char* status = "ALL");
   bool sendSms(const char* number, const String& message, Stream& out);
@@ -106,6 +122,7 @@ class TCallA7670Modem {
   void powerOnModem();
   int ceregStat();
   void printAt(Stream& out, const char* cmd, uint32_t timeoutMs = 3000);
+  void configurePdpContext(Stream& out, const char* apn);
 };
 
 const char* simStatusName(SimStatus status);

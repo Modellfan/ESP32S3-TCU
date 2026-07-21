@@ -1,7 +1,8 @@
 #include <Arduino.h>
 
 #include <ArduinoOTA.h>
-#include <PubSubClient.h>
+#include <RemoteDeviceManager.h>
+#include <SPIFFS.h>
 #include <WiFi.h>
 #include <ctype.h>
 #include <math.h>
@@ -16,7 +17,12 @@ namespace {
 constexpr const char* WIFI_SSID = TCALL_WIFI_SSID;
 constexpr const char* WIFI_PASSWORD = TCALL_WIFI_PASSWORD;
 constexpr const char* OTA_HOSTNAME = TCALL_OTA_HOSTNAME;
+constexpr const char* DEVICE_ID = TCALL_DEVICE_ID;
 constexpr const char* MQTT_HOST = TCALL_MQTT_HOST;
+constexpr const char* MQTT_CELLULAR_HOST = TCALL_MQTT_CELLULAR_HOST;
+constexpr uint16_t MQTT_CELLULAR_PORT = TCALL_MQTT_CELLULAR_PORT;
+constexpr bool MQTT_CELLULAR_NATIVE = TCALL_MQTT_CELLULAR_NATIVE != 0;
+constexpr bool RDM_LTE_ALIVE_AUTOSTART = TCALL_RDM_LTE_ALIVE_AUTOSTART != 0;
 constexpr const char* MQTT_TRANSPORT = TCALL_MQTT_TRANSPORT;
 constexpr uint16_t MQTT_PORT = TCALL_MQTT_PORT;
 constexpr const char* MQTT_USER = TCALL_MQTT_USER;
@@ -24,10 +30,13 @@ constexpr const char* MQTT_PASS = TCALL_MQTT_PASS;
 constexpr const char* MQTT_CLIENT_ID = TCALL_MQTT_CLIENT_ID;
 constexpr const char* MQTT_TOPIC_PREFIX = TCALL_MQTT_TOPIC_PREFIX;
 constexpr uint32_t MQTT_PUBLISH_INTERVAL_MS = TCALL_MQTT_PUBLISH_INTERVAL_MS;
+constexpr const char* FW_VERSION = TCALL_FW_VERSION;
 constexpr bool GPS_AUTOSTART = TCALL_GPS_AUTOSTART != 0;
 constexpr uint16_t WIFI_CONSOLE_PORT = 23;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 constexpr uint32_t MQTT_RECONNECT_INTERVAL_MS = 10000;
+constexpr uint32_t RDM_LTE_ALIVE_RETRY_MS = 60000;
+constexpr uint16_t RDM_HTTP_DEFAULT_PORT = 80;
 
 tcall::TCallA7670Modem modemService;
 tcall::GitHubOtaDemo githubOta(modemService);
@@ -35,11 +44,160 @@ tcall::GpsBufferedService gpsBuffer(modemService);
 WiFiServer wifiConsoleServer(WIFI_CONSOLE_PORT);
 WiFiClient wifiConsoleClient;
 WiFiClient mqttNetClient;
-PubSubClient mqttClient(mqttNetClient);
+WiFiClient remoteHttpClient;
 String serialCommandLine;
 String wifiCommandLine;
-uint32_t nextMqttConnectMs = 0;
-uint32_t nextMqttPublishMs = 0;
+RemoteDeviceManager::WiFiMqttTransport wifiMqttTransport(mqttNetClient);
+
+class NativeCellularMqttTransport : public RemoteDeviceManager::MqttTransport {
+ public:
+  explicit NativeCellularMqttTransport(tcall::TCallA7670Modem& modem) : modem_(modem) {}
+
+  bool connect(const char* host,
+               uint16_t port,
+               const char* clientId,
+               const char* user,
+               const char* pass,
+               Stream* log) override
+  {
+    active_ = this;
+    modem_.mqttSetCallback(&NativeCellularMqttTransport::onMessage);
+    connected_ = modem_.mqttBegin(false, log) && modem_.mqttConnect(host, port, clientId, user, pass, log);
+    return connected_;
+  }
+
+  bool connected() const override { return connected_; }
+
+  bool publish(const char* topic, const char* payload, bool retain, Stream* log) override
+  {
+    connected_ = modem_.mqttPublish(topic, payload, retain, log);
+    return connected_;
+  }
+
+  bool subscribe(const char* topic, Stream* log) override
+  {
+    connected_ = modem_.mqttSubscribe(topic, log);
+    return connected_;
+  }
+
+  bool poll(RemoteDeviceManager::MqttMessage& message) override
+  {
+    modem_.mqttHandle(100);
+    if (!pending_) {
+      return false;
+    }
+    message = pendingMessage_;
+    pending_ = false;
+    return true;
+  }
+
+  void disconnect(Stream* log) override
+  {
+    modem_.mqttDisconnect(log);
+    connected_ = false;
+  }
+
+  const char* name() const override { return "simcom-native-mqtt"; }
+
+ private:
+  static void onMessage(const char* topic, const uint8_t* payload, uint32_t len)
+  {
+    if (!active_) {
+      return;
+    }
+    active_->pendingMessage_.topic = topic;
+    active_->pendingMessage_.payload = "";
+    active_->pendingMessage_.payload.reserve(len);
+    for (uint32_t i = 0; i < len; ++i) {
+      active_->pendingMessage_.payload += static_cast<char>(payload[i]);
+    }
+    active_->pending_ = true;
+  }
+
+  tcall::TCallA7670Modem& modem_;
+  bool connected_ = false;
+  bool pending_ = false;
+  RemoteDeviceManager::MqttMessage pendingMessage_;
+  static NativeCellularMqttTransport* active_;
+};
+
+NativeCellularMqttTransport* NativeCellularMqttTransport::active_ = nullptr;
+NativeCellularMqttTransport cellularMqttTransport(modemService);
+
+class SwitchableMqttTransport : public RemoteDeviceManager::MqttTransport {
+ public:
+  SwitchableMqttTransport(RemoteDeviceManager::MqttTransport& wifi,
+                          RemoteDeviceManager::MqttTransport& cellular)
+      : wifi_(wifi), cellular_(cellular), active_(&wifi) {}
+
+  bool setMode(const char* mode, Stream& out)
+  {
+    if (!mode) {
+      out.println("missing transport mode");
+      return false;
+    }
+    String requested = mode;
+    requested.trim();
+    requested.toLowerCase();
+    RemoteDeviceManager::MqttTransport* next = nullptr;
+    if (requested == "wifi") {
+      next = &wifi_;
+    } else if (requested == "lte" || requested == "cellular") {
+      next = &cellular_;
+    } else {
+      out.print("unsupported transport mode: ");
+      out.println(mode);
+      return false;
+    }
+    if (next == active_) {
+      out.print("transport already active: ");
+      out.println(name());
+      return true;
+    }
+    active_->disconnect(&out);
+    active_ = next;
+    out.print("transport switched to ");
+    out.println(name());
+    return true;
+  }
+
+  bool usingCellular() const { return active_ == &cellular_; }
+
+  bool connect(const char* host,
+               uint16_t port,
+               const char* clientId,
+               const char* user,
+               const char* pass,
+               Stream* log) override
+  {
+    const char* selectedHost = usingCellular() && strlen(MQTT_CELLULAR_HOST) > 0 ? MQTT_CELLULAR_HOST : host;
+    const uint16_t selectedPort = usingCellular() && MQTT_CELLULAR_PORT > 0 ? MQTT_CELLULAR_PORT : port;
+    return active_->connect(selectedHost, selectedPort, clientId, user, pass, log);
+  }
+
+  bool connected() const override { return active_->connected(); }
+  bool publish(const char* topic, const char* payload, bool retain, Stream* log) override
+  {
+    return active_->publish(topic, payload, retain, log);
+  }
+  bool subscribe(const char* topic, Stream* log) override { return active_->subscribe(topic, log); }
+  bool poll(RemoteDeviceManager::MqttMessage& message) override { return active_->poll(message); }
+  void disconnect(Stream* log) override { active_->disconnect(log); }
+  const char* name() const override { return active_->name(); }
+
+ private:
+  RemoteDeviceManager::MqttTransport& wifi_;
+  RemoteDeviceManager::MqttTransport& cellular_;
+  RemoteDeviceManager::MqttTransport* active_;
+};
+
+SwitchableMqttTransport switchableMqttTransport(wifiMqttTransport, cellularMqttTransport);
+RemoteDeviceManager::Manager* remoteManager = nullptr;
+
+struct ProbeEndpoint {
+  String host;
+  uint16_t port = 0;
+};
 
 constexpr tcall::ApnProfile GSM_APN_PROFILES[] = {
     {"configured_default", tcall::DEFAULT_APN, tcall::DEFAULT_APN_USER,
@@ -63,6 +221,7 @@ void printHelp(Stream& out)
   out.println("  mqtt status|publish");
   out.println("  ota config|latest|update");
   out.println("  gsm prove [timeout_seconds] [host] [path]");
+  out.println("  gsm tcp <host> <port> [timeout_seconds]");
   out.println("  gsm reset");
   out.println("  http <host> [path]");
   out.println("  gps on|off|raw|fix|ex|cache|prove [timeout_seconds]|hot|cold|status");
@@ -160,6 +319,167 @@ bool mqttUseCellular()
          strcmp(MQTT_TRANSPORT, "gsm") == 0;
 }
 
+String escapeJsonValue(const String& value)
+{
+  String out;
+  out.reserve(value.length() + 8);
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if (c == '\n') {
+      out += "\\n";
+    } else if (c == '\r') {
+      out += "\\r";
+    } else if (static_cast<uint8_t>(c) >= 0x20) {
+      out += c;
+    }
+  }
+  return out;
+}
+
+ProbeEndpoint endpointFromHostPort(const String& host, const String& port, uint16_t fallbackPort)
+{
+  ProbeEndpoint endpoint;
+  endpoint.host = host;
+  endpoint.host.trim();
+  endpoint.port = port.length() ? static_cast<uint16_t>(port.toInt()) : fallbackPort;
+  return endpoint;
+}
+
+ProbeEndpoint endpointFromUrl(const String& url, uint16_t fallbackPort)
+{
+  ProbeEndpoint endpoint;
+  String value = url;
+  value.trim();
+  int start = value.indexOf("://");
+  start = start >= 0 ? start + 3 : 0;
+  int slash = value.indexOf('/', start);
+  String hostPort = slash >= 0 ? value.substring(start, slash) : value.substring(start);
+  int colon = hostPort.lastIndexOf(':');
+  if (colon > 0) {
+    endpoint.host = hostPort.substring(0, colon);
+    endpoint.port = static_cast<uint16_t>(hostPort.substring(colon + 1).toInt());
+  } else {
+    endpoint.host = hostPort;
+    endpoint.port = fallbackPort;
+  }
+  endpoint.host.trim();
+  return endpoint;
+}
+
+bool wifiTcpProbe(const ProbeEndpoint& endpoint, uint16_t timeoutMs = 900)
+{
+  if (endpoint.host.length() == 0 || endpoint.port == 0 || WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+  WiFiClient probe;
+  probe.setTimeout(timeoutMs);
+  const bool ok = probe.connect(endpoint.host.c_str(), endpoint.port);
+  probe.stop();
+  return ok;
+}
+
+bool cellularTcpProbe(const ProbeEndpoint& endpoint, uint8_t timeoutSeconds = 2)
+{
+  if (endpoint.host.length() == 0 || endpoint.port == 0 || !modemService.dataActive()) {
+    return false;
+  }
+  return modemService.tcpProbe(endpoint.host.c_str(), endpoint.port, timeoutSeconds, Serial);
+}
+
+struct ConnectivityProbeCache {
+  String wifiMqttKey;
+  String wifiHttpKey;
+  String lteMqttKey;
+  String lteHttpKey;
+  bool wifiMqttOk = false;
+  bool wifiHttpOk = false;
+  bool lteMqttOk = false;
+  bool lteHttpOk = false;
+  uint32_t wifiMqttCheckedMs = 0;
+  uint32_t wifiHttpCheckedMs = 0;
+  uint32_t lteMqttCheckedMs = 0;
+  uint32_t lteHttpCheckedMs = 0;
+};
+
+ConnectivityProbeCache connectivityProbeCache;
+uint32_t nextLteAliveDataAttemptMs = 0;
+
+String endpointKey(const ProbeEndpoint& endpoint)
+{
+  return endpoint.host + ":" + String(endpoint.port);
+}
+
+bool cachedWifiHttpProbe(const ProbeEndpoint& endpoint, bool wifiConnected)
+{
+  if (!wifiConnected || endpoint.host.length() == 0 || endpoint.port == 0) {
+    connectivityProbeCache.wifiHttpOk = false;
+    return false;
+  }
+  const uint32_t now = millis();
+  const String key = endpointKey(endpoint);
+  if (key != connectivityProbeCache.wifiHttpKey ||
+      now - connectivityProbeCache.wifiHttpCheckedMs > 30000UL) {
+    connectivityProbeCache.wifiHttpKey = key;
+    connectivityProbeCache.wifiHttpCheckedMs = now;
+    connectivityProbeCache.wifiHttpOk = wifiTcpProbe(endpoint, 350);
+  }
+  return connectivityProbeCache.wifiHttpOk;
+}
+
+bool cachedWifiMqttProbe(const ProbeEndpoint& endpoint, bool wifiConnected)
+{
+  if (!wifiConnected || endpoint.host.length() == 0 || endpoint.port == 0) {
+    connectivityProbeCache.wifiMqttOk = false;
+    return false;
+  }
+  const uint32_t now = millis();
+  const String key = endpointKey(endpoint);
+  if (key != connectivityProbeCache.wifiMqttKey ||
+      now - connectivityProbeCache.wifiMqttCheckedMs > 30000UL) {
+    connectivityProbeCache.wifiMqttKey = key;
+    connectivityProbeCache.wifiMqttCheckedMs = now;
+    connectivityProbeCache.wifiMqttOk = wifiTcpProbe(endpoint, 350);
+  }
+  return connectivityProbeCache.wifiMqttOk;
+}
+
+bool cachedLteHttpProbe(const ProbeEndpoint& endpoint, bool lteConnected)
+{
+  if (!lteConnected || endpoint.host.length() == 0 || endpoint.port == 0) {
+    connectivityProbeCache.lteHttpOk = false;
+    return false;
+  }
+  const uint32_t now = millis();
+  const String key = endpointKey(endpoint);
+  if (key != connectivityProbeCache.lteHttpKey ||
+      now - connectivityProbeCache.lteHttpCheckedMs > 30000UL) {
+    connectivityProbeCache.lteHttpKey = key;
+    connectivityProbeCache.lteHttpCheckedMs = now;
+    connectivityProbeCache.lteHttpOk = cellularTcpProbe(endpoint, 2);
+  }
+  return connectivityProbeCache.lteHttpOk;
+}
+
+bool cachedLteMqttProbe(const ProbeEndpoint& endpoint, bool lteConnected)
+{
+  if (!lteConnected || endpoint.host.length() == 0 || endpoint.port == 0) {
+    connectivityProbeCache.lteMqttOk = false;
+    return false;
+  }
+  const uint32_t now = millis();
+  const String key = endpointKey(endpoint);
+  if (key != connectivityProbeCache.lteMqttKey ||
+      now - connectivityProbeCache.lteMqttCheckedMs > 30000UL) {
+    connectivityProbeCache.lteMqttKey = key;
+    connectivityProbeCache.lteMqttCheckedMs = now;
+    connectivityProbeCache.lteMqttOk = cellularTcpProbe(endpoint, 2);
+  }
+  return connectivityProbeCache.lteMqttOk;
+}
+
 bool ensureCellularData(Stream& out)
 {
   if (modemService.dataActive()) {
@@ -187,6 +507,27 @@ bool ensureCellularData(Stream& out)
   return true;
 }
 
+bool ensureLteDataForAlive()
+{
+  if (modemService.dataActive()) {
+    return true;
+  }
+  if (!RDM_LTE_ALIVE_AUTOSTART) {
+    return false;
+  }
+  const uint32_t now = millis();
+  if (now < nextLteAliveDataAttemptMs) {
+    return false;
+  }
+  nextLteAliveDataAttemptMs = now + RDM_LTE_ALIVE_RETRY_MS;
+  Serial.println("RemoteDeviceManager alive: LTE data is down; retrying LTE data activation.");
+  const bool ok = ensureCellularData(Serial);
+  if (!ok) {
+    Serial.println("RemoteDeviceManager alive: LTE data activation retry failed.");
+  }
+  return ok;
+}
+
 String mqttTopic(const char* suffix)
 {
   String topic = MQTT_TOPIC_PREFIX;
@@ -199,56 +540,13 @@ String mqttTopic(const char* suffix)
 
 bool mqttEnsureConnected(Stream* out = nullptr)
 {
-  if (!mqttConfigured()) {
-    if (out) {
-      (*out).println("MQTT disabled: TCALL_MQTT_HOST is empty.");
-    }
-    return false;
-  }
-  if (mqttUseCellular()) {
-    mqttClient.setClient(modemService.cellularClient());
-    if (!modemService.dataActive()) {
-      if (out) {
-        (*out).println("MQTT unavailable: cellular data is down. Run `data up` first.");
-      }
-      return false;
-    }
-  } else {
-    mqttClient.setClient(mqttNetClient);
-  }
-
-  if (!mqttUseCellular() && WiFi.status() != WL_CONNECTED) {
-    if (out) {
-      (*out).println("MQTT unavailable: WiFi is disconnected.");
-    }
-    return false;
-  }
-  if (mqttClient.connected()) {
+  if (remoteManager && remoteManager->connected()) {
     return true;
   }
-
-  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-  bool connected = false;
-  if (strlen(MQTT_USER) > 0 || strlen(MQTT_PASS) > 0) {
-    connected = mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS);
-  } else {
-    connected = mqttClient.connect(MQTT_CLIENT_ID);
-  }
-
   if (out) {
-    (*out).print("MQTT connect ");
-    (*out).print(MQTT_HOST);
-    (*out).print(':');
-    (*out).print(MQTT_PORT);
-    (*out).print(" -> ");
-    (*out).println(connected ? "OK" : "FAILED");
-    if (!connected) {
-      (*out).print("MQTT state: ");
-      (*out).println(mqttClient.state());
-    }
+    (*out).println("MQTT connection is managed by RemoteDeviceManager.");
   }
-
-  return connected;
+  return false;
 }
 
 String gpsJson()
@@ -322,7 +620,10 @@ String statusJson()
   json += ",\"ip\":\"";
   json += WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : "";
   json += "\",\"mqtt_connected\":";
-  json += mqttClient.connected() ? "true" : "false";
+  json += remoteManager && remoteManager->connected() ? "true" : "false";
+  json += ",\"mqtt_transport\":\"";
+  json += remoteManager ? remoteManager->transportName() : "none";
+  json += "\"";
   json += ",\"gps_power_seen\":";
   json += gpsBuffer.gpsPowerSeen() ? "true" : "false";
   json += ",\"gps_last_poll_ok\":";
@@ -331,31 +632,76 @@ String statusJson()
   return json;
 }
 
+String connectivityJson(const String& requestPayload)
+{
+  const String requestId = RemoteDeviceManager::jsonValue(requestPayload, "request_id");
+  const ProbeEndpoint wifiHttp =
+      endpointFromUrl(RemoteDeviceManager::jsonValue(requestPayload, "local_http"), RDM_HTTP_DEFAULT_PORT);
+  const ProbeEndpoint wifiMqtt =
+      endpointFromHostPort(RemoteDeviceManager::jsonValue(requestPayload, "local_mqtt_host"),
+                           RemoteDeviceManager::jsonValue(requestPayload, "mqtt_port"), MQTT_PORT);
+  const ProbeEndpoint lteHttp =
+      endpointFromUrl(RemoteDeviceManager::jsonValue(requestPayload, "public_http"), RDM_HTTP_DEFAULT_PORT);
+  const ProbeEndpoint lteMqtt =
+      endpointFromHostPort(RemoteDeviceManager::jsonValue(requestPayload, "public_mqtt_host"),
+                           RemoteDeviceManager::jsonValue(requestPayload, "public_mqtt_port"),
+                           MQTT_CELLULAR_PORT > 0 ? MQTT_CELLULAR_PORT : MQTT_PORT);
+
+  const bool activeLte = switchableMqttTransport.usingCellular();
+  const bool activeWifi = !activeLte;
+  const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+  const bool wifiMqttOk = activeWifi && remoteManager && remoteManager->connected()
+                              ? true
+                              : cachedWifiMqttProbe(wifiMqtt, wifiConnected);
+  const bool lteConnected = modemService.dataActive() || ensureLteDataForAlive();
+  const bool lteMqttOk = activeLte && remoteManager && remoteManager->connected()
+                              ? true
+                              : cachedLteMqttProbe(lteMqtt, lteConnected);
+  const bool wifiHttpOk = cachedWifiHttpProbe(wifiHttp, wifiConnected);
+  const bool lteHttpOk = cachedLteHttpProbe(lteHttp, lteConnected);
+
+  String json;
+  json.reserve(640);
+  json += "{\"schema\":\"rdm-1\",\"device_id\":\"";
+  json += DEVICE_ID;
+  json += "\",\"request_id\":\"";
+  json += escapeJsonValue(requestId);
+  json += "\",\"uptime_ms\":";
+  json += millis();
+  json += ",\"active_link\":\"";
+  json += activeLte ? "lte" : "wifi";
+  json += "\",\"transport\":\"";
+  json += remoteManager ? remoteManager->transportName() : "none";
+  json += "\",\"wifi\":{\"connected\":";
+  json += wifiConnected ? "true" : "false";
+  json += ",\"ip\":\"";
+  json += wifiConnected ? WiFi.localIP().toString() : "";
+  json += "\",\"rssi\":";
+  json += wifiConnected ? String(WiFi.RSSI()) : String(0);
+  json += ",\"mqtt\":";
+  json += wifiMqttOk ? "true" : "false";
+  json += ",\"http\":";
+  json += wifiHttpOk ? "true" : "false";
+  json += "},\"lte\":{\"connected\":";
+  json += lteConnected ? "true" : "false";
+  json += ",\"ip\":\"";
+  json += lteConnected ? modemService.localIP() : "";
+  json += "\",\"mqtt\":";
+  json += lteMqttOk ? "true" : "false";
+  json += ",\"http\":";
+  json += lteHttpOk ? "true" : "false";
+  json += "}}";
+  return json;
+}
+
 bool mqttPublishTelemetry(Stream* out = nullptr)
 {
-  if (!mqttEnsureConnected(out)) {
-    return false;
-  }
-
-  const String gpsPayload = gpsJson();
-  const String statusPayload = statusJson();
-  const String gpsTopic = mqttTopic("gps");
-  const String statusTopic = mqttTopic("status");
-  const bool gpsOk = mqttClient.publish(gpsTopic.c_str(), gpsPayload.c_str(), true);
-  const bool statusOk = mqttClient.publish(statusTopic.c_str(), statusPayload.c_str(), true);
-
+  const bool ok = remoteManager && remoteManager->publishTelemetry();
   if (out) {
-    (*out).print("MQTT publish ");
-    (*out).print(gpsTopic);
-    (*out).print(" -> ");
-    (*out).println(gpsOk ? "OK" : "FAILED");
-    (*out).print("MQTT publish ");
-    (*out).print(statusTopic);
-    (*out).print(" -> ");
-    (*out).println(statusOk ? "OK" : "FAILED");
+    (*out).print("RemoteDeviceManager telemetry publish -> ");
+    (*out).println(ok ? "OK" : "FAILED");
   }
-
-  return gpsOk && statusOk;
+  return ok;
 }
 
 void printBasicFix(const tcall::GnssFix& fix, Stream& out)
@@ -696,7 +1042,29 @@ void handleGsmCommand(String args, Stream& out)
     return;
   }
 
-  out.println("Usage: gsm prove [timeout_seconds] [host] [path] | gsm reset");
+  if (action == "tcp") {
+    String host = nextToken(args);
+    const uint16_t port = static_cast<uint16_t>(nextToken(args).toInt());
+    uint32_t timeoutSeconds = static_cast<uint32_t>(nextToken(args).toInt());
+    if (timeoutSeconds == 0) {
+      timeoutSeconds = 30;
+    }
+
+    if (host.length() == 0 || port == 0) {
+      out.println("Usage: gsm tcp <host> <port> [timeout_seconds]");
+      return;
+    }
+
+    if (!ensureCellularData(out)) {
+      out.println("LTE data unavailable.");
+      return;
+    }
+
+    modemService.tcpProbe(host.c_str(), port, static_cast<uint8_t>(min<uint32_t>(timeoutSeconds, 255)), out);
+    return;
+  }
+
+  out.println("Usage: gsm prove [timeout_seconds] [host] [path] | gsm tcp <host> <port> [timeout_seconds] | gsm reset");
 }
 
 void handleSimCommand(String args, Stream& out)
@@ -817,6 +1185,10 @@ void handleMqttCommand(String args, Stream& out)
     out.println(mqttConfigured() ? "yes" : "no");
     out.print("MQTT host: ");
     out.println(MQTT_HOST);
+    out.print("MQTT cellular host: ");
+    out.println(MQTT_CELLULAR_HOST);
+    out.print("MQTT cellular native: ");
+    out.println(MQTT_CELLULAR_NATIVE ? "yes" : "no");
     out.print("MQTT port: ");
     out.println(MQTT_PORT);
     out.print("MQTT transport: ");
@@ -824,9 +1196,9 @@ void handleMqttCommand(String args, Stream& out)
     out.print("MQTT topic prefix: ");
     out.println(MQTT_TOPIC_PREFIX);
     out.print("MQTT connected: ");
-    out.println(mqttClient.connected() ? "yes" : "no");
-    out.print("MQTT state: ");
-    out.println(mqttClient.state());
+    out.println(remoteManager && remoteManager->connected() ? "yes" : "no");
+    out.print("MQTT implementation: ");
+    out.println(remoteManager ? remoteManager->transportName() : "not started");
     return;
   }
 
@@ -1149,21 +1521,71 @@ void pollWifiConsole()
 
 void pollMqtt()
 {
+  if (remoteManager) {
+    remoteManager->loop();
+  }
+}
+
+bool remoteOtaCommand(const char* command, Stream& out)
+{
+  String args = command;
+  args.trim();
+  if (args.length() == 0 || args == "github_latest") {
+    args = "update";
+  }
+  handleOtaCommand(args, out);
+  return true;
+}
+
+bool remoteSetTransport(const char* mode, Stream& out)
+{
+  String requested = mode ? mode : "";
+  requested.trim();
+  requested.toLowerCase();
+  if (requested == "lte" || requested == "cellular") {
+    if (!ensureCellularData(out)) {
+      out.println("cellular data connection failed");
+      return false;
+    }
+  }
+  return switchableMqttTransport.setMode(requested.c_str(), out);
+}
+
+void setupRemoteDeviceManager()
+{
   if (!mqttConfigured()) {
+    Serial.println("RemoteDeviceManager disabled: TCALL_MQTT_HOST is empty.");
     return;
   }
 
-  if (mqttClient.connected()) {
-    mqttClient.loop();
-  } else if (millis() - nextMqttConnectMs >= MQTT_RECONNECT_INTERVAL_MS) {
-    nextMqttConnectMs = millis();
-    mqttEnsureConnected();
+  if (!SPIFFS.begin(true)) {
+    Serial.println("SPIFFS mount failed; RemoteDeviceManager file functions disabled.");
   }
 
-  if (mqttClient.connected() && millis() - nextMqttPublishMs >= MQTT_PUBLISH_INTERVAL_MS) {
-    nextMqttPublishMs = millis();
-    mqttPublishTelemetry();
-  }
+  static RemoteDeviceManager::Config config;
+  config.deviceId = DEVICE_ID;
+  config.topicPrefix = MQTT_TOPIC_PREFIX;
+  config.mqttHost = MQTT_HOST;
+  config.mqttPort = MQTT_PORT;
+  config.mqttUser = MQTT_USER;
+  config.mqttPass = MQTT_PASS;
+  config.mqttClientId = MQTT_CLIENT_ID;
+  config.firmwareVersion = FW_VERSION;
+  config.filesystem = &SPIFFS;
+  config.httpClient = &remoteHttpClient;
+  config.log = &Serial;
+  config.consoleCommand = executeCommand;
+  config.statusJson = statusJson;
+  config.gpsJson = gpsJson;
+  config.otaCommand = remoteOtaCommand;
+  config.transportSet = remoteSetTransport;
+  config.connectivityJson = connectivityJson;
+
+  switchableMqttTransport.setMode("wifi", Serial);
+  remoteManager = new RemoteDeviceManager::Manager(switchableMqttTransport);
+  remoteManager->begin(config);
+  Serial.print("RemoteDeviceManager started with ");
+  Serial.println(remoteManager->transportName());
 }
 
 }  // namespace
@@ -1178,6 +1600,10 @@ void setup()
   setupWifi();
   modemService.begin(Serial);
   modemService.waitOnline(45000, Serial);
+  if (mqttUseCellular() || RDM_LTE_ALIVE_AUTOSTART) {
+    ensureCellularData(Serial);
+  }
+  setupRemoteDeviceManager();
   if (GPS_AUTOSTART) {
     Serial.println("GPS autostart enabled.");
     gpsBuffer.begin();

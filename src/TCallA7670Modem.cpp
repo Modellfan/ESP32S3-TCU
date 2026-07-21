@@ -333,10 +333,7 @@ bool TCallA7670Modem::configureApn(const char* apn, Stream& log)
 {
   log.println("Configuring APN context.");
   printAt(log, "+CMEE=2");
-  String cgdc = "+CGDCONT=1,\"IP\",\"";
-  cgdc += apn;
-  cgdc += "\"";
-  printAt(log, cgdc.c_str());
+  configurePdpContext(log, apn);
   printAt(log, "+CEREG=2");
   printAt(log, "+CREG=2");
   printAt(log, "+CGREG=2");
@@ -415,6 +412,7 @@ bool TCallA7670Modem::activateData(const char* apn,
 
   printAt(log ? *log : Serial, "+CGATT=1", 10000);
   printAt(log ? *log : Serial, "+CGATT?");
+  configurePdpContext(log ? *log : Serial, apn);
   if (strlen(user) > 0 || strlen(pass) > 0) {
     String auth = "+CGAUTH=1,0,\"";
     auth += user;
@@ -431,6 +429,7 @@ bool TCallA7670Modem::activateData(const char* apn,
       if (log) {
         (*log).print("PDP connected. Local IP: ");
         (*log).println(modem.getLocalIP());
+        printAt(*log, "+CGPADDR=1", 5000);
       }
       return true;
     }
@@ -470,6 +469,116 @@ Client& TCallA7670Modem::cellularClient()
 Client& TCallA7670Modem::cellularSecureClient()
 {
   return secureClient;
+}
+
+bool TCallA7670Modem::tcpProbe(const char* host, uint16_t port, uint8_t timeoutSeconds, Stream& out)
+{
+  out.print("TCP probe ");
+  out.print(host);
+  out.print(':');
+  out.print(port);
+  out.print(" timeout=");
+  out.print(timeoutSeconds);
+  out.println('s');
+
+  client.stop(1000);
+  const bool connected = client.connect(host, port, timeoutSeconds);
+  out.print("TCP probe -> ");
+  out.println(connected ? "OPEN" : "FAILED");
+  if (connected) {
+    client.stop(1000);
+  }
+  return connected;
+}
+
+bool TCallA7670Modem::mqttBegin(bool ssl, Stream* log)
+{
+  if (log) {
+    (*log).print("Modem MQTT begin ssl=");
+    (*log).println(ssl ? "yes" : "no");
+  }
+  modem.mqtt_set_rx_buffer_size(4096);
+  return modem.mqtt_begin(ssl);
+}
+
+bool TCallA7670Modem::mqttConnect(const char* server,
+                                  uint16_t port,
+                                  const char* clientId,
+                                  const char* user,
+                                  const char* pass,
+                                  Stream* log)
+{
+  if (log) {
+    (*log).print("Modem MQTT connect ");
+    (*log).print(server);
+    (*log).print(':');
+    (*log).println(port);
+  }
+
+  const bool hasAuth = strlen(user) > 0 || strlen(pass) > 0;
+  const bool ok = hasAuth ? modem.mqtt_connect(0, server, port, clientId, user, pass)
+                          : modem.mqtt_connect(0, server, port, clientId);
+  if (log) {
+    (*log).print("Modem MQTT connect -> ");
+    (*log).println(ok ? "OK" : "FAILED");
+  }
+  return ok;
+}
+
+bool TCallA7670Modem::mqttPublish(const char* topic,
+                                  const char* payload,
+                                  bool retain,
+                                  Stream* log)
+{
+  if (log) {
+    (*log).print("Modem MQTT publish ");
+    (*log).print(topic);
+    (*log).print(" bytes=");
+    (*log).println(strlen(payload));
+  }
+
+  const bool ok = modem.mqtt_publish(0, topic, payload, 0, 60, retain ? 1 : 0);
+  if (log) {
+    (*log).print("Modem MQTT publish -> ");
+    (*log).println(ok ? "OK" : "FAILED");
+  }
+  return ok;
+}
+
+bool TCallA7670Modem::mqttSubscribe(const char* topic, Stream* log)
+{
+  if (log) {
+    (*log).print("Modem MQTT subscribe ");
+    (*log).println(topic);
+  }
+  const bool ok = modem.mqtt_subscribe(0, topic, 0, 0);
+  if (log) {
+    (*log).print("Modem MQTT subscribe -> ");
+    (*log).println(ok ? "OK" : "FAILED");
+  }
+  return ok;
+}
+
+void TCallA7670Modem::mqttSetCallback(void (*callback)(const char* topic,
+                                                       const uint8_t* payload,
+                                                       uint32_t len))
+{
+  modem.mqtt_set_callback(callback);
+}
+
+bool TCallA7670Modem::mqttHandle(uint32_t timeoutMs)
+{
+  return modem.mqtt_handle(timeoutMs);
+}
+
+bool TCallA7670Modem::mqttDisconnect(Stream* log)
+{
+  const bool ok = modem.mqtt_disconnect(0) == 0;
+  if (log) {
+    (*log).print("Modem MQTT disconnect -> ");
+    (*log).println(ok ? "OK" : "FAILED");
+  }
+  return ok;
 }
 
 bool TCallA7670Modem::httpGet(const char* host, const char* path, uint16_t port, Stream& out)
@@ -792,6 +901,16 @@ void TCallA7670Modem::printAt(Stream& out, const char* cmd, uint32_t timeoutMs)
   out.print(cmd);
   out.print(" -> ");
   out.println(rawAt(cmd, timeoutMs));
+}
+
+void TCallA7670Modem::configurePdpContext(Stream& out, const char* apn)
+{
+  String cgdc = "+CGDCONT=1,\"";
+  cgdc += TCALL_PDP_TYPE;
+  cgdc += "\",\"";
+  cgdc += apn;
+  cgdc += "\"";
+  printAt(out, cgdc.c_str());
 }
 
 }  // namespace tcall

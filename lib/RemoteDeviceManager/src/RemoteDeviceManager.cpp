@@ -475,8 +475,6 @@ void Manager::handleMqttMessage(const String& topicName, const String& payload)
 {
   if (topicName == topic("console/cmd")) {
     handleConsoleCommand(payload);
-  } else if (topicName == topic("telnet/cmd")) {
-    handleConsoleCommand(payload);
   } else if (topicName == topic("fs/jobs")) {
     handleFileJob(payload);
   } else if (topicName == topic("ota/jobs")) {
@@ -637,7 +635,6 @@ void Manager::publishConsoleState()
   payload += "\",\"enabled\":true,\"busy\":false,\"uptime_ms\":";
   payload += millis();
   payload += "}";
-  mqtt_.publish(topic("telnet/state").c_str(), payload.c_str(), true, config_.log);
   mqtt_.publish(topic("console/state").c_str(), payload.c_str(), true, config_.log);
 }
 
@@ -749,7 +746,6 @@ void Manager::publishConsoleOutput(const String& sessionId,
     payload += durationMs;
   }
   payload += "}";
-  mqtt_.publish(topic("telnet/out").c_str(), payload.c_str(), false, config_.log);
   mqtt_.publish(topic("console/out").c_str(), payload.c_str(), false, config_.log);
 }
 
