@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""RemoteDeviceManager WebUI, HTTP file host, and MQTT controller."""
+"""RemoteDeviceManager WebUI, OTA HTTP host, and MQTT controller."""
 
 from __future__ import annotations
 
@@ -231,6 +231,7 @@ class AppState:
     retained: dict[str, object] = field(default_factory=dict)
     server_checks: dict[str, object] = field(default_factory=dict)
     server_checks_ts: float = 0.0
+    file_downloads: dict[str, dict] = field(default_factory=dict)
     transfer_stats: dict[str, object] = field(default_factory=lambda: {
         "wifi": {"mqtt": {"up": 0, "down": 0}, "http": {"up": 0, "down": 0}},
         "lte": {"mqtt": {"up": 0, "down": 0}, "http": {"up": 0, "down": 0}},
@@ -267,6 +268,8 @@ class AppState:
         if suffix == "rdm/alive":
             parsed = self._normalize_alive(parsed)
         with self.lock:
+            if isinstance(parsed, dict):
+                self._record_file_transfer_unlocked(suffix, parsed)
             self.messages.append({"ts": time.time(), "topic": topic, "payload": parsed, "retain": retain})
             self.messages = self.messages[-200:]
             self.retained[topic] = parsed
@@ -342,6 +345,100 @@ class AppState:
         with self.lock:
             self._add_transfer_unlocked(link, protocol, direction, byte_count)
 
+    def wait_for_file_ack(self, job_id: str, seq: int, statuses: set[str], timeout: float = 12.0) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self.lock:
+                for message in reversed(self.messages):
+                    if message.get("topic") != self.topic("fs/ack"):
+                        continue
+                    payload = message.get("payload")
+                    if not isinstance(payload, dict):
+                        continue
+                    try:
+                        payload_seq = int(payload.get("seq", -1))
+                    except (TypeError, ValueError):
+                        payload_seq = -1
+                    if payload.get("job_id") == job_id and payload_seq == seq:
+                        if str(payload.get("status", "")) in statuses:
+                            return payload
+            time.sleep(0.1)
+        raise TimeoutError(f"timeout waiting for fs/ack job={job_id} seq={seq}")
+
+    def publish_file_upload(self, path: str, data: bytes) -> dict:
+        if not path.startswith("/"):
+            path = "/" + path
+        if len(data) == 0:
+            raise ValueError("empty files are not supported")
+        if len(data) > self.args.mqtt_file_max_bytes:
+            raise ValueError(f"file exceeds MQTT limit of {self.args.mqtt_file_max_bytes} bytes")
+        crc = zlib.crc32(data) & 0xFFFFFFFF
+        chunk_size = max(1, min(self.args.mqtt_file_chunk_bytes, self.args.mqtt_file_max_chunk_bytes))
+        job = self.publish_job("fs/jobs", {
+            "op": "put_mqtt",
+            "path": path,
+            "size": len(data),
+            "crc32": f"{crc:08x}",
+            "encoding": "hex",
+            "chunk_size": chunk_size,
+        })
+        self.wait_for_file_ack(job["job_id"], 0, {"ready"})
+        chunks = 0
+        for offset in range(0, len(data), chunk_size):
+            chunk = data[offset:offset + chunk_size]
+            payload = {
+                "schema": "rdm-1",
+                "device_id": self.args.device,
+                "job_id": job["job_id"],
+                "op": "put_mqtt",
+                "seq": chunks,
+                "offset": offset,
+                "encoding": "hex",
+                "data": chunk.hex(),
+            }
+            encoded = json.dumps(payload, separators=(",", ":"))
+            self.mqtt.publish(self.topic("fs/data"), encoded)
+            self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
+            self.wait_for_file_ack(job["job_id"], chunks, {"ok"})
+            chunks += 1
+            time.sleep(0.05)
+        job["chunks"] = chunks
+        return job
+
+    def _record_file_transfer_unlocked(self, suffix: str, payload: dict) -> None:
+        if suffix == "fs/data" and payload.get("op") == "get_mqtt":
+            job_id = str(payload.get("job_id", ""))
+            if not job_id:
+                return
+            entry = self.file_downloads.setdefault(job_id, {
+                "path": str(payload.get("path", "")),
+                "chunks": {},
+                "created_at": time.time(),
+            })
+            if payload.get("path"):
+                entry["path"] = str(payload.get("path"))
+            try:
+                seq = int(payload.get("seq", 0))
+                entry["chunks"][seq] = bytes.fromhex(str(payload.get("data", "")))
+            except ValueError:
+                entry["error"] = "decode_failed"
+        elif suffix == "fs/result" and payload.get("op") == "get_mqtt" and payload.get("status") == "ok":
+            job_id = str(payload.get("job_id", ""))
+            entry = self.file_downloads.get(job_id)
+            if not entry:
+                return
+            chunks = entry.get("chunks", {})
+            data = b"".join(chunks[index] for index in sorted(chunks))
+            expected_crc = str(payload.get("crc32", ""))
+            actual_crc = f"{zlib.crc32(data) & 0xFFFFFFFF:08x}"
+            base_name = Path(str(payload.get("path") or entry.get("path") or "download.bin")).name or "download.bin"
+            target = self.uploads / f"{job_id}-{base_name}"
+            target.write_bytes(data)
+            entry["local_path"] = str(target)
+            entry["size"] = len(data)
+            entry["crc32"] = actual_crc
+            entry["status"] = "ok" if not expected_crc or expected_crc == actual_crc else "crc_mismatch"
+
     def latest_payload(self, suffix: str) -> object | None:
         topic = self.topic(suffix)
         with self.lock:
@@ -349,6 +446,18 @@ class AppState:
                 if message.get("topic") == topic:
                     return message.get("payload")
         return None
+
+    def file_download_summary_unlocked(self) -> dict[str, dict]:
+        summary: dict[str, dict] = {}
+        for job_id, entry in self.file_downloads.items():
+            chunks = entry.get("chunks", {})
+            summary[job_id] = {
+                key: value for key, value in entry.items()
+                if key != "chunks" and (isinstance(value, (str, int, float, bool)) or value is None)
+            }
+            if isinstance(chunks, dict):
+                summary[job_id]["chunk_count"] = len(chunks)
+        return summary
 
     def get_server_checks(self) -> dict[str, object]:
         with self.lock:
@@ -645,7 +754,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
 <script>
 let state={}, activeView='device', localConsole='', pendingTransport=null, pendingTransportUntil=0, vehicleMap=null, vehicleMarker=null, lastAliveFullAt=0;
 let uploadItems={}, fileListRequestedAt=0, fileListBusy=false, selectedFilePath='', longPressTimer=null, fileMenuOpenedAt=0;
-const titles={device:['Device','Live remote state over MQTT control plane.'],map:['Map','Vehicle position and speed from GPS telemetry.'],console:['Console','Run firmware commands without opening a serial port.'],files:['Files','SPIFFS file transfer over the RemoteDeviceManager data plane.'],ota:['OTA','Firmware update operations and results.'],trace:['MQTT Trace','Raw controller message buffer.']};
+const titles={device:['Device','Live remote state over MQTT control plane.'],map:['Map','Vehicle position and speed from GPS telemetry.'],console:['Console','Run firmware commands without opening a serial port.'],files:['Files','SPIFFS file transfer over MQTT.'],ota:['OTA','Firmware update operations and results.'],trace:['MQTT Trace','Raw controller message buffer.']};
 const consoleCommands=[
   ['help','Show all firmware console commands'],
   ['diag','Print modem and board diagnostics'],
@@ -991,6 +1100,7 @@ class Handler(BaseHTTPRequestHandler):
                     },
                     "server_checks": checks,
                     "transfer_stats": self.state.transfer_stats,
+                    "file_downloads": self.state.file_download_summary_unlocked(),
                 })
             return
         if parsed.path.startswith("/assets/"):
@@ -1045,29 +1155,27 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/files/download":
             data = json.loads(self._body() or b"{}")
             job_id = f"job-{uuid.uuid4().hex[:12]}"
+            path = data.get("path", "")
+            with self.state.lock:
+                self.state.file_downloads[job_id] = {"path": path, "chunks": {}, "created_at": time.time()}
             self.state.publish_job("fs/jobs", {
                 "job_id": job_id,
-                "op": "get_url",
-                "path": data.get("path", ""),
-                "url": f"{self.state.args.public_base_url.rstrip('/')}/uploads/{job_id}",
+                "op": "get_mqtt",
+                "path": path,
+                "encoding": "hex",
+                "chunk_size": self.state.args.mqtt_file_chunk_bytes,
             })
             self._json({"ok": True, "job_id": job_id})
         elif parsed.path == "/api/files/upload":
             name = query.get("path", ["/upload.bin"])[0].lstrip("/")
-            job_id = f"job-{uuid.uuid4().hex[:12]}"
-            target = self.state.hosted / job_id / Path(name).name
-            target.parent.mkdir(parents=True, exist_ok=True)
             data = self._body()
-            target.write_bytes(data)
-            crc = zlib.crc32(data) & 0xFFFFFFFF
-            self.state.publish_job("fs/jobs", {
-                "job_id": job_id,
-                "op": "put_url",
-                "path": "/" + name,
-                "url": f"{self.state.args.public_base_url.rstrip('/')}/files/{job_id}/{target.name}",
-                "crc32": f"{crc:08x}",
-            })
-            self._json({"ok": True, "job_id": job_id, "crc32": f"{crc:08x}"})
+            try:
+                payload = self.state.publish_file_upload("/" + name, data)
+                self._json({"ok": True, "job_id": payload["job_id"], "crc32": payload["crc32"], "chunks": payload["chunks"]})
+            except TimeoutError as exc:
+                self._json({"error": str(exc)}, 504)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 413)
         elif parsed.path == "/api/ota/github":
             payload = self.state.publish_job("ota/jobs", {"op": "github_latest"})
             self._json({"ok": True, "job_id": payload["job_id"]})
@@ -1169,6 +1277,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-mqtt-host", default="")
     parser.add_argument("--public-mqtt-host", default="")
     parser.add_argument("--public-mqtt-port", type=int, default=0)
+    parser.add_argument("--mqtt-file-max-bytes", type=int, default=16384)
+    parser.add_argument("--mqtt-file-chunk-bytes", type=int, default=384)
+    parser.add_argument("--mqtt-file-max-chunk-bytes", type=int, default=384)
     parser.add_argument("--open", action="store_true")
     args = parser.parse_args()
     if not args.local_http_url:

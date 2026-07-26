@@ -2,9 +2,11 @@
 
 Version: `rdm-1`
 
-RemoteDeviceManager uses MQTT only as a control plane. Files and firmware images are
-transferred through HTTP URLs. The ESP32 is always the client, so the workflow is the
-same for WiFi and LTE and does not require inbound connectivity to the device.
+RemoteDeviceManager uses MQTT for command, status, console, and bounded SPIFFS file
+transfer. File bytes are carried as small hex-encoded MQTT JSON chunks so the same
+wire protocol works over WiFi and LTE without inbound connectivity to the ESP32.
+OTA images remain URL-based because full firmware binaries are too large for this
+simple JSON chunk path.
 
 ## Topics
 
@@ -19,6 +21,8 @@ eboxster/console/out
 eboxster/console/state
 eboxster/console/cancel
 eboxster/fs/jobs
+eboxster/fs/data
+eboxster/fs/ack
 eboxster/fs/result
 eboxster/fs/state
 eboxster/ota/jobs
@@ -114,41 +118,74 @@ Result:
 }
 ```
 
-### Upload To Device
+### Upload To Device Over MQTT
 
-The controller hosts a file and publishes:
+The controller publishes a `put_mqtt` job first:
 
 ```json
 {
   "schema": "rdm-1",
   "device_id": "eboxster",
   "job_id": "job-002",
-  "op": "put_url",
+  "op": "put_mqtt",
   "path": "/config.json",
-  "url": "http://192.168.3.2:8080/files/job-002/config.json",
-  "crc32": "1a2b3c4d"
+  "size": 123,
+  "crc32": "1a2b3c4d",
+  "encoding": "hex",
+  "chunk_size": 384
 }
 ```
 
-The device downloads the URL with HTTP GET, writes the file to SPIFFS, verifies CRC32
-when provided, and publishes `fs/result`.
+The device responds on `fs/ack` with `status:"ready"`, then the controller publishes
+chunks on `fs/data`:
 
-### Download From Device
+```json
+{
+  "schema": "rdm-1",
+  "device_id": "eboxster",
+  "job_id": "job-002",
+  "op": "put_mqtt",
+  "seq": 0,
+  "offset": 0,
+  "encoding": "hex",
+  "data": "7b226d6f6465223a2274657374227d"
+}
+```
 
-The controller publishes an upload URL:
+The device ACKs each chunk on `fs/ack`:
+
+```json
+{
+  "schema": "rdm-1",
+  "device_id": "eboxster",
+  "job_id": "job-002",
+  "op": "put_mqtt",
+  "seq": 0,
+  "status": "ok"
+}
+```
+
+When the expected byte count is received, the device verifies CRC32 and publishes
+`fs/result`. The demo limit is 16 KiB with 384 byte raw chunks.
+
+### Download From Device Over MQTT
+
+The controller publishes:
 
 ```json
 {
   "schema": "rdm-1",
   "device_id": "eboxster",
   "job_id": "job-003",
-  "op": "get_url",
+  "op": "get_mqtt",
   "path": "/log.txt",
-  "url": "http://192.168.3.2:8080/uploads/job-003"
+  "encoding": "hex",
+  "chunk_size": 384
 }
 ```
 
-The device uploads the file with HTTP PUT.
+The device publishes file chunks on `fs/data` with `op:"get_mqtt"` and a final
+`fs/result` containing `size`, `chunks`, and `crc32`.
 
 ### Delete
 
@@ -201,12 +238,12 @@ reboots only after `Update.end(true)` succeeds.
 Minimum for field use:
 
 - MQTT authentication and per-device ACLs.
-- Non-public or authenticated HTTP file URLs.
+- MQTT authentication and size limits for MQTT file transfer.
 - CRC32 for demo OTA and file jobs; use signed metadata or SHA-256 before production.
 - Disable dangerous console commands in production deployments.
 
 ## Non-Goals
 
-- No MQTT blockstreams.
+- No broker-specific file-stream feature.
 - No inbound server on the ESP32 for LTE.
 - No broker-specific features.

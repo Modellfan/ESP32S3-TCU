@@ -116,6 +116,7 @@ class Manager {
   void publishConsoleState();
   void handleConsoleCommand(const String& payload);
   void handleFileJob(const String& payload);
+  void handleFileData(const String& payload);
   void handleOtaJob(const String& payload);
   void handleAliveRequest(const String& payload);
   void handleTransportSet(const String& payload);
@@ -132,12 +133,12 @@ class Manager {
   void publishFileState();
   void publishOtaState();
   bool listFiles(const String& jobId);
-  bool putUrl(const String& jobId, const String& path, const String& url, uint32_t expectedCrc);
-  bool getUrl(const String& jobId, const String& path, const String& url);
+  bool beginMqttPut(const String& jobId, const String& path, size_t size, uint32_t expectedCrc);
+  bool sendMqttFile(const String& jobId, const String& path, size_t chunkSize);
+  bool finishMqttPut(bool ok, const char* detail);
+  bool publishFileAck(const String& jobId, uint32_t seq, const char* status, const char* detail = nullptr);
   bool deletePath(const String& jobId, const String& path);
   bool otaUrl(const String& jobId, const String& url, uint32_t expectedCrc, size_t size);
-  bool httpDownloadToFile(const String& url, const String& path, uint32_t expectedCrc);
-  bool httpUploadFile(const String& url, const String& path);
   bool httpDownloadToOta(const String& url, uint32_t expectedCrc, size_t size);
   bool parseUrl(const String& url, String& host, uint16_t& port, String& path);
   String normalizePath(const String& path) const;
@@ -151,6 +152,18 @@ class Manager {
   uint32_t nextTelemetryMs_ = 0;
   uint32_t nextStateMs_ = 0;
   uint32_t msgCounter_ = 0;
+
+  struct IncomingFileTransfer {
+    bool active = false;
+    String jobId;
+    String path;
+    File file;
+    size_t expectedSize = 0;
+    size_t receivedSize = 0;
+    uint32_t expectedCrc = 0;
+    uint32_t crc = 0;
+    uint32_t nextSeq = 0;
+  } incomingFile_;
 };
 
 String jsonValue(const String& json, const char* key);

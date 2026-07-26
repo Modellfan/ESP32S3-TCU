@@ -11,6 +11,8 @@ constexpr uint32_t TELEMETRY_INTERVAL_MS = 10000;
 constexpr uint32_t STATE_INTERVAL_MS = 30000;
 constexpr uint32_t HTTP_TIMEOUT_MS = 30000;
 constexpr size_t HTTP_BUFFER_SIZE = 512;
+constexpr size_t MQTT_FILE_CHUNK_BYTES = 384;
+constexpr size_t MQTT_FILE_MAX_BYTES = 16384;
 
 bool hasText(const char* value)
 {
@@ -98,6 +100,38 @@ bool readLine(Client& client, String& line, uint32_t timeoutMs)
     delay(1);
   }
   return false;
+}
+
+int hexNibble(char c)
+{
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool decodeHexBytes(const String& hex, uint8_t* out, size_t maxLen, size_t& outLen)
+{
+  if ((hex.length() % 2) != 0 || hex.length() / 2 > maxLen) {
+    return false;
+  }
+  outLen = hex.length() / 2;
+  for (size_t i = 0; i < outLen; ++i) {
+    const int high = hexNibble(hex[2 * i]);
+    const int low = hexNibble(hex[2 * i + 1]);
+    if (high < 0 || low < 0) {
+      return false;
+    }
+    out[i] = static_cast<uint8_t>((high << 4) | low);
+  }
+  return true;
+}
+
+void appendHexByte(String& out, uint8_t value)
+{
+  static const char* digits = "0123456789abcdef";
+  out += digits[(value >> 4) & 0x0F];
+  out += digits[value & 0x0F];
 }
 
 }  // namespace
@@ -477,6 +511,8 @@ void Manager::handleMqttMessage(const String& topicName, const String& payload)
     handleConsoleCommand(payload);
   } else if (topicName == topic("fs/jobs")) {
     handleFileJob(payload);
+  } else if (topicName == topic("fs/data")) {
+    handleFileData(payload);
   } else if (topicName == topic("ota/jobs")) {
     handleOtaJob(payload);
   } else if (topicName == topic("rdm/alive/request")) {
@@ -533,6 +569,7 @@ void Manager::subscribeTopics()
 {
   mqtt_.subscribe(topic("console/cmd").c_str(), config_.log);
   mqtt_.subscribe(topic("fs/jobs").c_str(), config_.log);
+  mqtt_.subscribe(topic("fs/data").c_str(), config_.log);
   mqtt_.subscribe(topic("ota/jobs").c_str(), config_.log);
   mqtt_.subscribe(topic("rdm/alive/request").c_str(), config_.log);
   mqtt_.subscribe(topic("rdm/transport/set").c_str(), config_.log);
@@ -660,15 +697,64 @@ void Manager::handleFileJob(const String& payload)
   const String op = jsonValue(payload, "op");
   if (op == "list") {
     listFiles(jobId);
-  } else if (op == "put_url") {
-    putUrl(jobId, jsonValue(payload, "path"), jsonValue(payload, "url"),
-           parseHex32(jsonValue(payload, "crc32")));
-  } else if (op == "get_url") {
-    getUrl(jobId, jsonValue(payload, "path"), jsonValue(payload, "url"));
+  } else if (op == "put_mqtt") {
+    beginMqttPut(jobId, jsonValue(payload, "path"),
+                 static_cast<size_t>(jsonValue(payload, "size").toInt()),
+                 parseHex32(jsonValue(payload, "crc32")));
+  } else if (op == "get_mqtt") {
+    size_t chunkSize = static_cast<size_t>(jsonValue(payload, "chunk_size").toInt());
+    if (chunkSize == 0 || chunkSize > MQTT_FILE_CHUNK_BYTES) {
+      chunkSize = MQTT_FILE_CHUNK_BYTES;
+    }
+    sendMqttFile(jobId, jsonValue(payload, "path"), chunkSize);
   } else if (op == "delete") {
     deletePath(jobId, jsonValue(payload, "path"));
   } else {
     publishResult("fs/result", jobId, op.c_str(), "rejected", "unsupported_op");
+  }
+}
+
+void Manager::handleFileData(const String& payload)
+{
+  const String op = jsonValue(payload, "op");
+  if (op != "put_mqtt") {
+    return;
+  }
+  const String jobId = jsonValue(payload, "job_id");
+  const uint32_t seq = static_cast<uint32_t>(jsonValue(payload, "seq").toInt());
+  if (!incomingFile_.active || jobId != incomingFile_.jobId) {
+    publishFileAck(jobId, seq, "rejected", "no_active_transfer");
+    return;
+  }
+  if (seq != incomingFile_.nextSeq) {
+    finishMqttPut(false, "unexpected_sequence");
+    publishFileAck(jobId, seq, "rejected", "unexpected_sequence");
+    return;
+  }
+  const String encoded = jsonValue(payload, "data");
+  uint8_t buffer[MQTT_FILE_CHUNK_BYTES];
+  size_t decodedLen = 0;
+  if (!decodeHexBytes(encoded, buffer, sizeof(buffer), decodedLen)) {
+    finishMqttPut(false, "decode_failed");
+    publishFileAck(jobId, seq, "rejected", "decode_failed");
+    return;
+  }
+  if (decodedLen == 0 || incomingFile_.receivedSize + decodedLen > incomingFile_.expectedSize) {
+    finishMqttPut(false, "size_overflow");
+    publishFileAck(jobId, seq, "rejected", "size_overflow");
+    return;
+  }
+  if (incomingFile_.file.write(buffer, decodedLen) != decodedLen) {
+    finishMqttPut(false, "write_failed");
+    publishFileAck(jobId, seq, "failed", "write_failed");
+    return;
+  }
+  incomingFile_.crc = crc32Update(incomingFile_.crc, buffer, decodedLen);
+  incomingFile_.receivedSize += decodedLen;
+  incomingFile_.nextSeq++;
+  publishFileAck(jobId, seq, "ok");
+  if (incomingFile_.receivedSize >= incomingFile_.expectedSize) {
+    finishMqttPut(true, nullptr);
   }
 }
 
@@ -760,7 +846,12 @@ void Manager::publishFileState()
   payload += 0;
   payload += ",\"total\":";
   payload += 0;
-  payload += ",\"capabilities\":{\"list\":true,\"put_url\":true,\"get_url\":true,\"delete\":true}}";
+  payload += ",\"capabilities\":{\"list\":true,\"put_mqtt\":true,\"get_mqtt\":true,\"delete\":true";
+  payload += ",\"encoding\":\"hex\",\"max_file_bytes\":";
+  payload += static_cast<uint32_t>(MQTT_FILE_MAX_BYTES);
+  payload += ",\"chunk_bytes\":";
+  payload += static_cast<uint32_t>(MQTT_FILE_CHUNK_BYTES);
+  payload += "}}";
   mqtt_.publish(topic("fs/state").c_str(), payload.c_str(), true, config_.log);
 }
 
@@ -807,19 +898,178 @@ bool Manager::listFiles(const String& jobId)
   return mqtt_.publish(topic("fs/result").c_str(), payload.c_str(), false, config_.log);
 }
 
-bool Manager::putUrl(const String& jobId, const String& path, const String& url, uint32_t expectedCrc)
+bool Manager::beginMqttPut(const String& jobId, const String& path, size_t size, uint32_t expectedCrc)
 {
-  const bool ok = httpDownloadToFile(url, normalizePath(path), expectedCrc);
-  publishResult("fs/result", jobId, "put_url", ok ? "ok" : "failed", ok ? nullptr : "download_failed");
-  publishFileState();
-  return ok;
+  const String normalized = normalizePath(path);
+  if (!config_.filesystem || !pathAllowed(normalized)) {
+    publishResult("fs/result", jobId, "put_mqtt", "rejected", "path_or_filesystem_unavailable");
+    return false;
+  }
+  if (size == 0 || size > MQTT_FILE_MAX_BYTES || expectedCrc == 0) {
+    publishResult("fs/result", jobId, "put_mqtt", "rejected", "invalid_size_or_crc");
+    return false;
+  }
+  if (incomingFile_.active) {
+    finishMqttPut(false, "superseded");
+  }
+  File file = config_.filesystem->open(normalized, FILE_WRITE);
+  if (!file) {
+    publishResult("fs/result", jobId, "put_mqtt", "failed", "open_failed");
+    return false;
+  }
+  incomingFile_.active = true;
+  incomingFile_.jobId = jobId;
+  incomingFile_.path = normalized;
+  incomingFile_.file = file;
+  incomingFile_.expectedSize = size;
+  incomingFile_.receivedSize = 0;
+  incomingFile_.expectedCrc = expectedCrc;
+  incomingFile_.crc = 0;
+  incomingFile_.nextSeq = 0;
+  publishFileAck(jobId, 0, "ready");
+  return true;
 }
 
-bool Manager::getUrl(const String& jobId, const String& path, const String& url)
+bool Manager::sendMqttFile(const String& jobId, const String& path, size_t chunkSize)
 {
-  const bool ok = httpUploadFile(url, normalizePath(path));
-  publishResult("fs/result", jobId, "get_url", ok ? "ok" : "failed", ok ? nullptr : "upload_failed");
-  return ok;
+  const String normalized = normalizePath(path);
+  if (!config_.filesystem || !pathAllowed(normalized)) {
+    publishResult("fs/result", jobId, "get_mqtt", "rejected", "path_or_filesystem_unavailable");
+    return false;
+  }
+  File file = config_.filesystem->open(normalized, FILE_READ);
+  if (!file || file.isDirectory()) {
+    publishResult("fs/result", jobId, "get_mqtt", "failed", "open_failed");
+    return false;
+  }
+  if (file.size() > MQTT_FILE_MAX_BYTES) {
+    file.close();
+    publishResult("fs/result", jobId, "get_mqtt", "rejected", "file_too_large");
+    return false;
+  }
+  chunkSize = min(chunkSize, MQTT_FILE_CHUNK_BYTES);
+  if (chunkSize == 0) {
+    chunkSize = MQTT_FILE_CHUNK_BYTES;
+  }
+  uint8_t buffer[MQTT_FILE_CHUNK_BYTES];
+  uint32_t seq = 0;
+  uint32_t crc = 0;
+  size_t sent = 0;
+  while (file.available()) {
+    const size_t got = file.read(buffer, chunkSize);
+    if (got == 0) {
+      break;
+    }
+    crc = crc32Update(crc, buffer, got);
+    String data;
+    data.reserve(got * 2);
+    for (size_t i = 0; i < got; ++i) {
+      appendHexByte(data, buffer[i]);
+    }
+    String payload;
+    payload.reserve(data.length() + 220);
+    payload += "{\"schema\":\"rdm-1\",\"device_id\":\"";
+    payload += config_.deviceId;
+    payload += "\",\"job_id\":\"";
+    payload += escapeJson(jobId);
+    payload += "\",\"op\":\"get_mqtt\",\"seq\":";
+    payload += seq++;
+    payload += ",\"offset\":";
+    payload += static_cast<uint32_t>(sent);
+    payload += ",\"path\":\"";
+    payload += escapeJson(normalized);
+    payload += "\"";
+    payload += ",\"encoding\":\"hex\",\"data\":\"";
+    payload += data;
+    payload += "\"}";
+    if (!mqtt_.publish(topic("fs/data").c_str(), payload.c_str(), false, config_.log)) {
+      file.close();
+      publishResult("fs/result", jobId, "get_mqtt", "failed", "publish_failed");
+      return false;
+    }
+    sent += got;
+    delay(10);
+  }
+  file.close();
+  String result = "{\"schema\":\"rdm-1\",\"device_id\":\"";
+  result += config_.deviceId;
+  result += "\",\"job_id\":\"";
+  result += escapeJson(jobId);
+  result += "\",\"op\":\"get_mqtt\",\"status\":\"ok\",\"path\":\"";
+  result += escapeJson(normalized);
+  result += "\",\"size\":";
+  result += static_cast<uint32_t>(sent);
+  result += ",\"chunks\":";
+  result += seq;
+  result += ",\"crc32\":\"";
+  char crcText[9];
+  snprintf(crcText, sizeof(crcText), "%08lx", static_cast<unsigned long>(crc));
+  result += crcText;
+  result += "\",\"uptime_ms\":";
+  result += millis();
+  result += "}";
+  return mqtt_.publish(topic("fs/result").c_str(), result.c_str(), false, config_.log);
+}
+
+bool Manager::finishMqttPut(bool ok, const char* detail)
+{
+  if (!incomingFile_.active) {
+    return false;
+  }
+  const String jobId = incomingFile_.jobId;
+  const String path = incomingFile_.path;
+  const size_t received = incomingFile_.receivedSize;
+  const uint32_t crc = incomingFile_.crc;
+  const uint32_t expectedCrc = incomingFile_.expectedCrc;
+  incomingFile_.file.close();
+  if (!ok || received != incomingFile_.expectedSize || (expectedCrc != 0 && crc != expectedCrc)) {
+    if (config_.filesystem) {
+      config_.filesystem->remove(path);
+    }
+    incomingFile_.active = false;
+    publishResult("fs/result", jobId, "put_mqtt", "failed", detail ? detail : "crc_or_size_mismatch");
+    publishFileState();
+    return false;
+  }
+  incomingFile_.active = false;
+  String result = "{\"schema\":\"rdm-1\",\"device_id\":\"";
+  result += config_.deviceId;
+  result += "\",\"job_id\":\"";
+  result += escapeJson(jobId);
+  result += "\",\"op\":\"put_mqtt\",\"status\":\"ok\",\"path\":\"";
+  result += escapeJson(path);
+  result += "\",\"size\":";
+  result += static_cast<uint32_t>(received);
+  result += ",\"crc32\":\"";
+  char crcText[9];
+  snprintf(crcText, sizeof(crcText), "%08lx", static_cast<unsigned long>(crc));
+  result += crcText;
+  result += "\",\"uptime_ms\":";
+  result += millis();
+  result += "}";
+  const bool published = mqtt_.publish(topic("fs/result").c_str(), result.c_str(), false, config_.log);
+  publishFileState();
+  return published;
+}
+
+bool Manager::publishFileAck(const String& jobId, uint32_t seq, const char* status, const char* detail)
+{
+  String payload = "{\"schema\":\"rdm-1\",\"device_id\":\"";
+  payload += config_.deviceId;
+  payload += "\",\"job_id\":\"";
+  payload += escapeJson(jobId);
+  payload += "\",\"op\":\"put_mqtt\",\"seq\":";
+  payload += seq;
+  payload += ",\"status\":\"";
+  payload += status;
+  payload += "\"";
+  if (detail && strlen(detail) > 0) {
+    payload += ",\"detail\":\"";
+    payload += escapeJson(detail);
+    payload += "\"";
+  }
+  payload += "}";
+  return mqtt_.publish(topic("fs/ack").c_str(), payload.c_str(), false, config_.log);
 }
 
 bool Manager::deletePath(const String& jobId, const String& path)
@@ -842,119 +1092,6 @@ bool Manager::otaUrl(const String& jobId, const String& url, uint32_t expectedCr
     delay(1000);
     ESP.restart();
   }
-  return ok;
-}
-
-bool Manager::httpDownloadToFile(const String& url, const String& path, uint32_t expectedCrc)
-{
-  if (!config_.filesystem || !config_.httpClient || !pathAllowed(path)) {
-    return false;
-  }
-  String host;
-  String requestPath;
-  uint16_t port = 80;
-  if (!parseUrl(url, host, port, requestPath)) {
-    return false;
-  }
-  Client& client = *config_.httpClient;
-  client.stop();
-  if (!client.connect(host.c_str(), port)) {
-    return false;
-  }
-  client.print("GET ");
-  client.print(requestPath);
-  client.print(" HTTP/1.1\r\nHost: ");
-  client.print(host);
-  client.print("\r\nConnection: close\r\n\r\n");
-  String line;
-  if (!readLine(client, line, HTTP_TIMEOUT_MS) || line.indexOf(" 200 ") < 0) {
-    client.stop();
-    return false;
-  }
-  int contentLength = -1;
-  while (readLine(client, line, HTTP_TIMEOUT_MS) && line.length() > 0) {
-    String lower = line;
-    lower.toLowerCase();
-    if (lower.startsWith("content-length:")) {
-      contentLength = line.substring(15).toInt();
-    }
-  }
-  File file = config_.filesystem->open(path, FILE_WRITE);
-  if (!file) {
-    client.stop();
-    return false;
-  }
-  uint8_t buffer[HTTP_BUFFER_SIZE];
-  uint32_t crc = 0;
-  int remaining = contentLength;
-  uint32_t last = millis();
-  while ((client.connected() || client.available()) && millis() - last < HTTP_TIMEOUT_MS) {
-    size_t got = 0;
-    while (client.available() && got < sizeof(buffer)) {
-      buffer[got++] = static_cast<uint8_t>(client.read());
-      last = millis();
-    }
-    if (got > 0) {
-      crc = crc32Update(crc, buffer, got);
-      if (file.write(buffer, got) != got) {
-        file.close();
-        client.stop();
-        config_.filesystem->remove(path);
-        return false;
-      }
-      if (remaining > 0) {
-        remaining -= static_cast<int>(got);
-        if (remaining <= 0) break;
-      }
-    }
-    delay(1);
-  }
-  file.close();
-  client.stop();
-  if ((contentLength > 0 && remaining > 0) || (expectedCrc != 0 && crc != expectedCrc)) {
-    config_.filesystem->remove(path);
-    return false;
-  }
-  return true;
-}
-
-bool Manager::httpUploadFile(const String& url, const String& path)
-{
-  if (!config_.filesystem || !config_.httpClient || !pathAllowed(path)) {
-    return false;
-  }
-  File file = config_.filesystem->open(path, FILE_READ);
-  if (!file || file.isDirectory()) {
-    return false;
-  }
-  String host;
-  String requestPath;
-  uint16_t port = 80;
-  if (!parseUrl(url, host, port, requestPath)) {
-    return false;
-  }
-  Client& client = *config_.httpClient;
-  client.stop();
-  if (!client.connect(host.c_str(), port)) {
-    return false;
-  }
-  client.print("PUT ");
-  client.print(requestPath);
-  client.print(" HTTP/1.1\r\nHost: ");
-  client.print(host);
-  client.print("\r\nContent-Length: ");
-  client.print(file.size());
-  client.print("\r\nConnection: close\r\n\r\n");
-  uint8_t buffer[HTTP_BUFFER_SIZE];
-  while (file.available()) {
-    const size_t got = file.read(buffer, sizeof(buffer));
-    if (got > 0) {
-      client.write(buffer, got);
-    }
-  }
-  String line;
-  const bool ok = readLine(client, line, HTTP_TIMEOUT_MS) && line.indexOf(" 200 ") >= 0;
-  client.stop();
   return ok;
 }
 

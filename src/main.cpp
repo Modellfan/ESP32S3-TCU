@@ -82,7 +82,7 @@ class NativeCellularMqttTransport : public RemoteDeviceManager::MqttTransport {
 
   bool poll(RemoteDeviceManager::MqttMessage& message) override
   {
-    modem_.mqttHandle(100);
+    modem_.mqttHandle(1000);
     if (!pending_) {
       return false;
     }
@@ -103,6 +103,9 @@ class NativeCellularMqttTransport : public RemoteDeviceManager::MqttTransport {
   static void onMessage(const char* topic, const uint8_t* payload, uint32_t len)
   {
     if (!active_) {
+      return;
+    }
+    if (active_->pending_) {
       return;
     }
     active_->pendingMessage_.topic = topic;
@@ -1207,7 +1210,26 @@ void handleMqttCommand(String args, Stream& out)
     return;
   }
 
-  out.println("Usage: mqtt status|publish");
+  if (action == "transport") {
+    String mode = nextToken(args);
+    mode.toLowerCase();
+    if (mode.length() == 0) {
+      out.println("Usage: mqtt transport <wifi|lte>");
+      return;
+    }
+    bool ok = true;
+    if (mode == "lte" || mode == "cellular" || mode == "gsm") {
+      ok = ensureCellularData(out);
+    }
+    ok = ok && switchableMqttTransport.setMode(mode.c_str(), out);
+    if (remoteManager) {
+      remoteManager->loop();
+    }
+    out.println(ok ? "MQTT TRANSPORT SWITCH PASS" : "MQTT TRANSPORT SWITCH FAIL");
+    return;
+  }
+
+  out.println("Usage: mqtt status|publish|transport <wifi|lte>");
 }
 
 void handleOtaCommand(String args, Stream& out)
@@ -1581,7 +1603,7 @@ void setupRemoteDeviceManager()
   config.transportSet = remoteSetTransport;
   config.connectivityJson = connectivityJson;
 
-  switchableMqttTransport.setMode("wifi", Serial);
+  switchableMqttTransport.setMode(MQTT_TRANSPORT, Serial);
   remoteManager = new RemoteDeviceManager::Manager(switchableMqttTransport);
   remoteManager->begin(config);
   Serial.print("RemoteDeviceManager started with ");
