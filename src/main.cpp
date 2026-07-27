@@ -36,7 +36,6 @@ constexpr uint16_t WIFI_CONSOLE_PORT = 23;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 constexpr uint32_t MQTT_RECONNECT_INTERVAL_MS = 10000;
 constexpr uint32_t RDM_LTE_ALIVE_RETRY_MS = 60000;
-constexpr uint16_t RDM_HTTP_DEFAULT_PORT = 80;
 
 tcall::TCallA7670Modem modemService;
 tcall::GitHubOtaDemo githubOta(modemService);
@@ -394,17 +393,11 @@ bool cellularTcpProbe(const ProbeEndpoint& endpoint, uint8_t timeoutSeconds = 2)
 
 struct ConnectivityProbeCache {
   String wifiMqttKey;
-  String wifiHttpKey;
   String lteMqttKey;
-  String lteHttpKey;
   bool wifiMqttOk = false;
-  bool wifiHttpOk = false;
   bool lteMqttOk = false;
-  bool lteHttpOk = false;
   uint32_t wifiMqttCheckedMs = 0;
-  uint32_t wifiHttpCheckedMs = 0;
   uint32_t lteMqttCheckedMs = 0;
-  uint32_t lteHttpCheckedMs = 0;
 };
 
 ConnectivityProbeCache connectivityProbeCache;
@@ -413,23 +406,6 @@ uint32_t nextLteAliveDataAttemptMs = 0;
 String endpointKey(const ProbeEndpoint& endpoint)
 {
   return endpoint.host + ":" + String(endpoint.port);
-}
-
-bool cachedWifiHttpProbe(const ProbeEndpoint& endpoint, bool wifiConnected)
-{
-  if (!wifiConnected || endpoint.host.length() == 0 || endpoint.port == 0) {
-    connectivityProbeCache.wifiHttpOk = false;
-    return false;
-  }
-  const uint32_t now = millis();
-  const String key = endpointKey(endpoint);
-  if (key != connectivityProbeCache.wifiHttpKey ||
-      now - connectivityProbeCache.wifiHttpCheckedMs > 30000UL) {
-    connectivityProbeCache.wifiHttpKey = key;
-    connectivityProbeCache.wifiHttpCheckedMs = now;
-    connectivityProbeCache.wifiHttpOk = wifiTcpProbe(endpoint, 350);
-  }
-  return connectivityProbeCache.wifiHttpOk;
 }
 
 bool cachedWifiMqttProbe(const ProbeEndpoint& endpoint, bool wifiConnected)
@@ -447,23 +423,6 @@ bool cachedWifiMqttProbe(const ProbeEndpoint& endpoint, bool wifiConnected)
     connectivityProbeCache.wifiMqttOk = wifiTcpProbe(endpoint, 350);
   }
   return connectivityProbeCache.wifiMqttOk;
-}
-
-bool cachedLteHttpProbe(const ProbeEndpoint& endpoint, bool lteConnected)
-{
-  if (!lteConnected || endpoint.host.length() == 0 || endpoint.port == 0) {
-    connectivityProbeCache.lteHttpOk = false;
-    return false;
-  }
-  const uint32_t now = millis();
-  const String key = endpointKey(endpoint);
-  if (key != connectivityProbeCache.lteHttpKey ||
-      now - connectivityProbeCache.lteHttpCheckedMs > 30000UL) {
-    connectivityProbeCache.lteHttpKey = key;
-    connectivityProbeCache.lteHttpCheckedMs = now;
-    connectivityProbeCache.lteHttpOk = cellularTcpProbe(endpoint, 2);
-  }
-  return connectivityProbeCache.lteHttpOk;
 }
 
 bool cachedLteMqttProbe(const ProbeEndpoint& endpoint, bool lteConnected)
@@ -638,13 +597,9 @@ String statusJson()
 String connectivityJson(const String& requestPayload)
 {
   const String requestId = RemoteDeviceManager::jsonValue(requestPayload, "request_id");
-  const ProbeEndpoint wifiHttp =
-      endpointFromUrl(RemoteDeviceManager::jsonValue(requestPayload, "local_http"), RDM_HTTP_DEFAULT_PORT);
   const ProbeEndpoint wifiMqtt =
       endpointFromHostPort(RemoteDeviceManager::jsonValue(requestPayload, "local_mqtt_host"),
                            RemoteDeviceManager::jsonValue(requestPayload, "mqtt_port"), MQTT_PORT);
-  const ProbeEndpoint lteHttp =
-      endpointFromUrl(RemoteDeviceManager::jsonValue(requestPayload, "public_http"), RDM_HTTP_DEFAULT_PORT);
   const ProbeEndpoint lteMqtt =
       endpointFromHostPort(RemoteDeviceManager::jsonValue(requestPayload, "public_mqtt_host"),
                            RemoteDeviceManager::jsonValue(requestPayload, "public_mqtt_port"),
@@ -660,11 +615,9 @@ String connectivityJson(const String& requestPayload)
   const bool lteMqttOk = activeLte && remoteManager && remoteManager->connected()
                               ? true
                               : cachedLteMqttProbe(lteMqtt, lteConnected);
-  const bool wifiHttpOk = cachedWifiHttpProbe(wifiHttp, wifiConnected);
-  const bool lteHttpOk = cachedLteHttpProbe(lteHttp, lteConnected);
 
   String json;
-  json.reserve(640);
+  json.reserve(560);
   json += "{\"schema\":\"rdm-1\",\"device_id\":\"";
   json += DEVICE_ID;
   json += "\",\"request_id\":\"";
@@ -683,16 +636,12 @@ String connectivityJson(const String& requestPayload)
   json += wifiConnected ? String(WiFi.RSSI()) : String(0);
   json += ",\"mqtt\":";
   json += wifiMqttOk ? "true" : "false";
-  json += ",\"http\":";
-  json += wifiHttpOk ? "true" : "false";
   json += "},\"lte\":{\"connected\":";
   json += lteConnected ? "true" : "false";
   json += ",\"ip\":\"";
   json += lteConnected ? modemService.localIP() : "";
   json += "\",\"mqtt\":";
   json += lteMqttOk ? "true" : "false";
-  json += ",\"http\":";
-  json += lteHttpOk ? "true" : "false";
   json += "}}";
   return json;
 }

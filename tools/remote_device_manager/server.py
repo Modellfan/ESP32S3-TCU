@@ -233,8 +233,8 @@ class AppState:
     server_checks_ts: float = 0.0
     file_downloads: dict[str, dict] = field(default_factory=dict)
     transfer_stats: dict[str, object] = field(default_factory=lambda: {
-        "wifi": {"mqtt": {"up": 0, "down": 0}, "http": {"up": 0, "down": 0}},
-        "lte": {"mqtt": {"up": 0, "down": 0}, "http": {"up": 0, "down": 0}},
+        "wifi": {"mqtt": {"up": 0, "down": 0}},
+        "lte": {"mqtt": {"up": 0, "down": 0}},
     })
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -291,7 +291,6 @@ class AppState:
                 "ip": str(src.get("i", "")),
                 "rssi": int(src.get("r", 0) or 0),
                 "mqtt": boolish(src.get("m")),
-                "http": boolish(src.get("h")),
             }
 
         active = str(payload.get("a", "w"))
@@ -336,7 +335,7 @@ class AppState:
             return self._infer_link_unlocked(payload)
 
     def _add_transfer_unlocked(self, link: str, protocol: str, direction: str, byte_count: int) -> None:
-        if link not in ("wifi", "lte") or protocol not in ("mqtt", "http") or direction not in ("up", "down"):
+        if link not in ("wifi", "lte") or protocol != "mqtt" or direction not in ("up", "down"):
             return
         bucket = self.transfer_stats.setdefault(link, {}).setdefault(protocol, {})
         bucket[direction] = int(bucket.get(direction, 0)) + max(0, int(byte_count))
@@ -465,8 +464,6 @@ class AppState:
                 return self.server_checks
 
         checks = {
-            "http_lan": http_status_check(self.args.local_http_url),
-            "http_public": http_status_check(self.args.public_http_url),
             "mqtt_lan": mqtt_status_check(self.args.local_mqtt_host, self.args.mqtt_port),
             "mqtt_public": mqtt_status_check(self.args.public_mqtt_host, self.args.public_mqtt_port),
         }
@@ -556,9 +553,9 @@ button,input{font:inherit}
 .node-card:last-child .node-row{grid-template-columns:minmax(78px,.7fr) minmax(0,1.6fr)}.node-card:last-child .node-value{white-space:normal;word-break:break-word;line-height:1.25;overflow:visible;text-overflow:clip}
 .endpoint-value{display:flex;align-items:center;justify-content:flex-end;gap:7px}.fresh-pulse{--pulse:#526575;width:13px;height:13px;border-radius:50%;border:1px solid var(--pulse);position:relative;display:inline-block;flex:0 0 auto}.fresh-pulse:after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--pulse);opacity:.75;animation:pulseCheck 1.6s ease-out infinite}.fresh-pulse.ok{--pulse:var(--teal)}.fresh-pulse.err{--pulse:var(--red);animation:none}.fresh-pulse.err:after{animation:none;opacity:.25}.fresh-pulse.warn{--pulse:var(--amber)}@keyframes pulseCheck{0%{transform:scale(.55);opacity:.9}100%{transform:scale(1.5);opacity:0}}
 .transport-choice{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px;background:#101922;border:1px solid #263642;border-radius:999px}.transport-choice button{height:28px;min-width:70px;border:0;border-radius:999px;background:transparent;color:#9fb0bd;cursor:pointer}.transport-choice button.active{background:var(--teal);color:white;font-weight:650}.transport-choice button.pending{background:var(--amber);color:#15110a;font-weight:650}.transport-choice button.blocked{color:#647987;cursor:not-allowed}
-.transport-list{display:grid;gap:8px}.transport-card{border:1px solid #2b3b47;background:#121c24;border-radius:9px;padding:10px;display:grid;gap:8px}.transport-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.transport-name{display:flex;align-items:center;gap:7px;color:#f4f8fb;font-weight:650}.transport-ip{font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;color:#dfe8ee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.check-pair{display:grid;grid-template-columns:1fr 1fr;gap:7px}.check{display:flex;align-items:center;justify-content:space-between;gap:6px;color:#9fb0bd;font-size:11px;border:1px solid #2b3b47;border-radius:7px;padding:5px 7px;background:#0f171f}
+.transport-list{display:grid;gap:8px}.transport-card{border:1px solid #2b3b47;background:#121c24;border-radius:9px;padding:10px;display:grid;gap:8px}.transport-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.transport-name{display:flex;align-items:center;gap:7px;color:#f4f8fb;font-weight:650}.transport-ip{font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;color:#dfe8ee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.check-pair{display:grid;grid-template-columns:1fr;gap:7px}.check{display:flex;align-items:center;justify-content:space-between;gap:6px;color:#9fb0bd;font-size:11px;border:1px solid #2b3b47;border-radius:7px;padding:5px 7px;background:#0f171f}
 .alive-row{display:flex;align-items:center;justify-content:space-between;gap:10px}.alive-ring{--p:0;width:24px;height:24px;border-radius:50%;background:conic-gradient(var(--teal) calc(var(--p)*1%),#31404b 0);display:grid;place-items:center;flex:0 0 auto}.alive-ring:after{content:"";width:15px;height:15px;border-radius:50%;background:#18232c}.alive-text{color:#9fb0bd;font-size:12px}
-.link-lines{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:0 20px;min-height:154px}
+.link-lines{display:grid;grid-template-columns:1fr;gap:14px;padding:0 74px;min-height:154px}
 .protocol-link{position:relative;display:grid;place-items:center;min-height:154px;color:#9fb0bd}
 .protocol-link svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .lane-path{fill:none;stroke-width:2;stroke-linecap:round;stroke-dasharray:4 5}
@@ -627,11 +624,11 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
         <div class="transport-list">
           <div class="transport-card">
             <div class="transport-top"><span class="transport-name"><i id="wifiDot" class="dot"></i> WiFi</span><span class="transport-ip" id="wifiIp">-</span></div>
-            <div class="check-pair"><span class="check">MQTT <i id="wifiMqttDot" class="dot"></i></span><span class="check">HTTP <i id="wifiHttpDot" class="dot"></i></span></div>
+            <div class="check-pair"><span class="check">MQTT Alive <i id="wifiMqttDot" class="dot"></i></span></div>
           </div>
           <div class="transport-card">
             <div class="transport-top"><span class="transport-name"><i id="lteDot" class="dot"></i> LTE</span><span class="transport-ip" id="lteIp">-</span></div>
-            <div class="check-pair"><span class="check">MQTT <i id="lteMqttDot" class="dot"></i></span><span class="check">HTTP <i id="lteHttpDot" class="dot"></i></span></div>
+            <div class="check-pair"><span class="check">MQTT Alive <i id="lteMqttDot" class="dot"></i></span></div>
           </div>
         </div>
         <div class="alive-row"><span class="alive-text" id="aliveText">alive pending</span><span class="alive-ring" id="aliveRing"></span></div>
@@ -649,24 +646,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:
           <span class="protocol-label">MQTT</span>
           <span class="lane-stats"><span>up <b id="mqttUpBytes">0 B</b></span><span>down <b id="mqttDownBytes">0 B</b></span></span>
         </div>
-        <div class="protocol-link" id="httpLane">
-          <svg viewBox="0 0 120 154" aria-hidden="true">
-            <defs>
-              <marker id="httpUpArrow" markerWidth="7" markerHeight="7" refX="4.5" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0 L7 3.5 L0 7 Z" fill="#82a0b3"/></marker>
-              <marker id="httpDownArrow" markerWidth="7" markerHeight="7" refX="4.5" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0 L7 3.5 L0 7 Z" fill="#1fa889"/></marker>
-            </defs>
-            <path class="lane-path up" d="M46 135 C26 108 26 46 46 18" marker-end="url(#httpUpArrow)"/>
-            <path class="lane-path down" d="M74 18 C94 46 94 108 74 135" marker-end="url(#httpDownArrow)"/>
-          </svg>
-          <span class="protocol-label">HTTP</span>
-          <span class="lane-stats"><span>up <b id="httpUpBytes">0 B</b></span><span>down <b id="httpDownBytes">0 B</b></span></span>
-        </div>
       </div>
       <div class="node-card">
         <div class="node-head"><div><div class="node-name">Backend</div></div></div>
         <div class="node-grid">
-          <div class="node-row"><span><i id="serverHttpLocalDot" class="dot"></i> HTTP LAN</span><span class="node-value endpoint-value"><span id="serverHttpLocal">-</span><span id="serverHttpLocalPulse" class="fresh-pulse"></span></span></div>
-          <div class="node-row"><span><i id="serverHttpPublicDot" class="dot"></i> HTTP Public</span><span class="node-value endpoint-value"><span id="serverHttpPublic">-</span><span id="serverHttpPublicPulse" class="fresh-pulse"></span></span></div>
           <div class="node-row"><span><i id="serverMqttLocalDot" class="dot"></i> MQTT LAN</span><span class="node-value endpoint-value"><span id="serverMqttLocal">-</span><span id="serverMqttLocalPulse" class="fresh-pulse"></span></span></div>
           <div class="node-row"><span><i id="serverMqttPublicDot" class="dot"></i> MQTT Public</span><span class="node-value endpoint-value"><span id="serverMqttPublic">-</span><span id="serverMqttPublicPulse" class="fresh-pulse"></span></span></div>
         </div>
@@ -881,24 +864,19 @@ function render(){
   let activeLink=actualActiveLink;
   if(pendingTransport && actualActiveLink===pendingTransport && aliveMsg && Date.now()/1000-aliveMsg.ts<5) pendingTransport=null;
   if(pendingTransport && Date.now()<pendingTransportUntil && actualActiveLink!==pendingTransport) activeLink=pendingTransport;
-  const transfer=(state.transfer_stats||{})[activeLink]||{mqtt:{},http:{}};
-  const mqttTransfer=transfer.mqtt||{}, httpTransfer=transfer.http||{};
+  const transfer=(state.transfer_stats||{})[activeLink]||{mqtt:{}};
+  const mqttTransfer=transfer.mqtt||{};
   $('mqttUpBytes').textContent=fmtTransfer(mqttTransfer.up);
   $('mqttDownBytes').textContent=fmtTransfer(mqttTransfer.down);
-  $('httpUpBytes').textContent=fmtTransfer(httpTransfer.up);
-  $('httpDownBytes').textContent=fmtTransfer(httpTransfer.down);
   $('mqttLane').title=activeLink.toUpperCase()+' MQTT counters. Up is device to backend, down is backend to device.';
-  $('httpLane').title=activeLink.toUpperCase()+' HTTP counters. Up is device upload, down is device download.';
   const wifiKnown=!!alive.wifi, lteKnown=!!alive.lte;
   const wifiMqttOk=!!(alive.wifi&&alive.wifi.mqtt);
-  const wifiHttpOk=!!(alive.wifi&&alive.wifi.http);
   const lteMqttOk=!!(alive.lte&&alive.lte.mqtt);
-  const lteHttpOk=!!(alive.lte&&alive.lte.http);
   const wifiOk=!!(alive.wifi&&alive.wifi.connected);
   const lteOk=!!(alive.lte&&alive.lte.connected);
   $('wifiDot').className=dotClass(wifiOk,wifiKnown); $('lteDot').className=dotClass(lteOk,lteKnown);
-  $('wifiMqttDot').className=dotClass(wifiMqttOk,wifiKnown); $('wifiHttpDot').className=dotClass(wifiHttpOk,wifiKnown);
-  $('lteMqttDot').className=dotClass(lteMqttOk,lteKnown); $('lteHttpDot').className=dotClass(lteHttpOk,lteKnown);
+  $('wifiMqttDot').className=dotClass(wifiMqttOk,wifiKnown);
+  $('lteMqttDot').className=dotClass(lteMqttOk,lteKnown);
   $('wifiIp').textContent=(alive.wifi&&alive.wifi.ip)||st.ip||'-'; $('lteIp').textContent=(alive.lte&&alive.lte.ip)||st.lte_ip||st.cellular_ip||'-';
   $('wifiModeBtn').classList.toggle('active', activeLink!=='lte');
   $('lteModeBtn').classList.toggle('active', activeLink==='lte');
@@ -914,30 +892,24 @@ function render(){
   const alivePct=Math.max(0,Math.min(100,100-(aliveAge/30)*100));
   $('aliveRing').style.setProperty('--p', alivePct);
   $('aliveText').textContent=sleepState==='sleeping'?'sleeping':(aliveFresh?('alive '+aliveAge.toFixed(1)+'s'):'alive timeout');
-  $('serverHttpLocalDot').className=dotClass(!!checks.http_lan?.ok,!!checks.http_lan);
-  $('serverHttpPublicDot').className=dotClass(!!checks.http_public?.ok,!!checks.http_public);
   $('serverMqttLocalDot').className=dotClass(!!checks.mqtt_lan?.ok,!!checks.mqtt_lan);
   $('serverMqttPublicDot').className=dotClass(!!checks.mqtt_public?.ok,!!checks.mqtt_public);
-  $('serverHttpLocal').textContent=(server.local_http||'-').replace(/^https?:\/\//,'');
-  $('serverHttpPublic').textContent=(server.public_http||'not configured').replace(/^https?:\/\//,'');
   $('serverMqttLocal').textContent=(server.local_mqtt_host||'-')+':'+(server.mqtt_port||1883);
   $('serverMqttPublic').textContent=server.public_mqtt_host?(server.public_mqtt_host+':'+(server.public_mqtt_port||server.mqtt_port||1883)):'not configured';
-  setPulse('serverHttpLocalPulse',checks.http_lan);
-  setPulse('serverHttpPublicPulse',checks.http_public);
   setPulse('serverMqttLocalPulse',checks.mqtt_lan);
   setPulse('serverMqttPublicPulse',checks.mqtt_public);
   const statusRow=([k,v])=>'<div class="status-item"><span>'+k+'</span><strong>'+v+'</strong></div>';
   const wifiIp=(alive.wifi&&alive.wifi.ip)||st.ip||'-';
   const lteIp=(alive.lte&&alive.lte.ip)||st.lte_ip||st.cellular_ip||'-';
-  const checkBadges=(mqtt,http)=>badge(!!mqtt,'MQTT')+' '+badge(!!http,'HTTP');
+  const checkBadges=(mqtt)=>badge(!!mqtt,'MQTT Alive');
   const gpsLat=Number(gps.lat||0), gpsLon=Number(gps.lon||0);
   const gpsPosition=(gps.has_fix||gps.valid)?(gpsLat.toFixed(6)+', '+gpsLon.toFixed(6)):'-';
   $('deviceConnectivity').innerHTML=[
     ['Active link',activeLink.toUpperCase()],
     ['WiFi',wifiOk?badge(true,'connected')+' '+wifiIp:badge(false,'offline')+' '+wifiIp],
-    ['WiFi checks',checkBadges(wifiMqttOk,wifiHttpOk)],
+    ['WiFi check',checkBadges(wifiMqttOk)],
     ['LTE',lteOk?badge(true,'connected')+' '+lteIp:badge(false,'offline')+' '+lteIp],
-    ['LTE checks',checkBadges(lteMqttOk,lteHttpOk)]
+    ['LTE check',checkBadges(lteMqttOk)]
   ].map(statusRow).join('');
   $('deviceSystem').innerHTML=[
     ['Transport',rdm.transport||st.mqtt_transport||'-'],
@@ -1093,8 +1065,6 @@ class Handler(BaseHTTPRequestHandler):
                     "messages": self.state.messages,
                     "topic_prefix": self.state.args.topic_prefix,
                     "server": {
-                        "local_http": self.state.args.local_http_url,
-                        "public_http": self.state.args.public_http_url,
                         "mqtt_host": self.state.args.mqtt_host,
                         "mqtt_port": self.state.args.mqtt_port,
                         "local_mqtt_host": self.state.args.local_mqtt_host,
@@ -1120,7 +1090,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "not_found"}, 404)
                 return
             data = file_path.read_bytes()
-            self.state.add_transfer(self.state.infer_link(), "http", "down", len(data))
             self._send(200, data, "application/octet-stream")
             return
         self._json({"error": "not_found"}, 404)
@@ -1134,7 +1103,6 @@ class Handler(BaseHTTPRequestHandler):
         target.parent.mkdir(parents=True, exist_ok=True)
         data = self._body()
         target.write_bytes(data)
-        self.state.add_transfer(self.state.infer_link(), "http", "up", len(data))
         self._json({"ok": True, "path": str(target)})
 
     def do_POST(self) -> None:
@@ -1205,8 +1173,6 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self.state.publish_control("rdm/alive/request", {
                     "request_id": request_id,
                     "compact": True,
-                    "local_http": self.state.args.local_http_url,
-                    "public_http": self.state.args.public_http_url,
                     "local_mqtt_host": self.state.args.local_mqtt_host,
                     "public_mqtt_host": self.state.args.public_mqtt_host,
                     "mqtt_port": self.state.args.mqtt_port,
@@ -1216,8 +1182,6 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 payload = self.state.publish_job("rdm/alive/request", {
                     "request_id": request_id,
-                    "local_http": self.state.args.local_http_url,
-                    "public_http": self.state.args.public_http_url,
                     "local_mqtt_host": self.state.args.local_mqtt_host,
                     "public_mqtt_host": self.state.args.public_mqtt_host,
                     "mqtt_port": self.state.args.mqtt_port,
