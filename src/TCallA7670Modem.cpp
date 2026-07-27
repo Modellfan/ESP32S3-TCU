@@ -45,6 +45,79 @@ void trimAtPrefix(String& command)
   command.trim();
 }
 
+bool likelyIpv6Literal(const String& value)
+{
+  if (value.indexOf(':') < 0) {
+    return false;
+  }
+
+  uint8_t colonCount = 0;
+  for (uint16_t i = 0; i < value.length(); ++i) {
+    const char c = value[i];
+    if (c == ':') {
+      ++colonCount;
+      continue;
+    }
+    if (c == '.' || isxdigit(static_cast<unsigned char>(c))) {
+      continue;
+    }
+    return false;
+  }
+  return colonCount >= 2;
+}
+
+String stripIpv6Brackets(String value)
+{
+  value.trim();
+  if (value.startsWith("[") && value.endsWith("]") && value.length() > 2) {
+    value = value.substring(1, value.length() - 1);
+  }
+  return value;
+}
+
+String mqttUrlHost(String host)
+{
+  host.trim();
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host;
+  }
+  if (likelyIpv6Literal(host)) {
+    return "[" + host + "]";
+  }
+  return host;
+}
+
+String extractIpv6FromDnsResponse(const String& response)
+{
+  int quote = response.indexOf('"');
+  while (quote >= 0) {
+    const int end = response.indexOf('"', quote + 1);
+    if (end < 0) {
+      break;
+    }
+    const String token = stripIpv6Brackets(response.substring(quote + 1, end));
+    if (likelyIpv6Literal(token)) {
+      return token;
+    }
+    quote = response.indexOf('"', end + 1);
+  }
+
+  String token;
+  for (uint16_t i = 0; i <= response.length(); ++i) {
+    const char c = i < response.length() ? response[i] : ',';
+    if (c == ',' || c == '\r' || c == '\n' || isspace(static_cast<unsigned char>(c))) {
+      token = stripIpv6Brackets(token);
+      if (likelyIpv6Literal(token)) {
+        return token;
+      }
+      token = "";
+    } else {
+      token += c;
+    }
+  }
+  return "";
+}
+
 }  // namespace
 
 namespace tcall {
@@ -508,16 +581,66 @@ bool TCallA7670Modem::mqttConnect(const char* server,
                                   const char* pass,
                                   Stream* log)
 {
+  const String requestedServer = server ? String(server) : String("");
+  const String firstServer = mqttUrlHost(requestedServer);
+
   if (log) {
     (*log).print("Modem MQTT connect ");
-    (*log).print(server);
+    (*log).print(firstServer);
     (*log).print(':');
     (*log).println(port);
   }
 
   const bool hasAuth = strlen(user) > 0 || strlen(pass) > 0;
-  const bool ok = hasAuth ? modem.mqtt_connect(0, server, port, clientId, user, pass)
-                          : modem.mqtt_connect(0, server, port, clientId);
+  if (likelyIpv6Literal(stripIpv6Brackets(requestedServer))) {
+    const String socketProfileResponse = rawAt("+CSOCKSETPN=1,6", 5000);
+    if (log) {
+      (*log).print("Modem socket profile IPv6 -> ");
+      (*log).println(socketProfileResponse.length() > 0 ? socketProfileResponse : "no response");
+    }
+  }
+  bool ok = hasAuth ? modem.mqtt_connect(0, firstServer.c_str(), port, clientId, user, pass)
+                    : modem.mqtt_connect(0, firstServer.c_str(), port, clientId);
+
+  if (!ok && requestedServer.indexOf(':') < 0) {
+    const String socketProfileResponse = rawAt("+CSOCKSETPN=1,6", 5000);
+    if (log) {
+      (*log).print("Modem socket profile IPv6 -> ");
+      (*log).println(socketProfileResponse.length() > 0 ? socketProfileResponse : "no response");
+      (*log).print("Modem MQTT retry hostname with IPv6 socket profile ");
+      (*log).print(firstServer);
+      (*log).print(':');
+      (*log).println(port);
+    }
+    ok = hasAuth ? modem.mqtt_connect(0, firstServer.c_str(), port, clientId, user, pass)
+                 : modem.mqtt_connect(0, firstServer.c_str(), port, clientId);
+  }
+
+  if (!ok && requestedServer.indexOf(':') < 0) {
+    String command = "+CDNSGIP=\"";
+    command += requestedServer;
+    command += "\"";
+    const String dnsResponse = rawAt(command, 20000);
+    const String ipv6 = extractIpv6FromDnsResponse(dnsResponse);
+    if (log) {
+      (*log).print("Modem MQTT DNS IPv6 lookup ");
+      (*log).print(requestedServer);
+      (*log).print(" -> ");
+      (*log).println(ipv6.length() > 0 ? ipv6 : "none");
+    }
+    if (ipv6.length() > 0) {
+      const String ipv6Server = mqttUrlHost(ipv6);
+      if (log) {
+        (*log).print("Modem MQTT retry IPv6 ");
+        (*log).print(ipv6Server);
+        (*log).print(':');
+        (*log).println(port);
+      }
+      ok = hasAuth ? modem.mqtt_connect(0, ipv6Server.c_str(), port, clientId, user, pass)
+                   : modem.mqtt_connect(0, ipv6Server.c_str(), port, clientId);
+    }
+  }
+
   if (log) {
     (*log).print("Modem MQTT connect -> ");
     (*log).println(ok ? "OK" : "FAILED");

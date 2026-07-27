@@ -42,8 +42,8 @@ Mindestaufbau:
 | HW-07 | Transport Umschalten | Wechsel WiFi <-> LTE ohne Kontrollverlust | WiFi, LTE | Teilautomatisch | [Ergebnis](#hw-07-transport-umschalten) |
 | HW-08 | MQTT Console | Remote Console fuehrt Firmware-Kommandos aus | WiFi, LTE | Automatisch | [Ergebnis](#hw-08-mqtt-console) |
 | HW-09 | SPIFFS List | WebUI zeigt Datei-/Ordnerliste | WiFi, LTE | Automatisch | [Ergebnis](#hw-09-spiffs-list) |
-| HW-10 | SPIFFS Upload | Datei wird per HTTP GET vom Tool auf SPIFFS geschrieben | WiFi, LTE | Automatisch | [Ergebnis](#hw-10-spiffs-upload) |
-| HW-11 | SPIFFS Download | Datei wird per HTTP PUT zum Tool uebertragen | WiFi, LTE | Automatisch | [Ergebnis](#hw-11-spiffs-download) |
+| HW-10 | SPIFFS Upload | Datei wird per MQTT-Chunks vom Tool auf SPIFFS geschrieben | WiFi, LTE | Automatisch | [Ergebnis](#hw-10-spiffs-upload) |
+| HW-11 | SPIFFS Download | Datei wird per MQTT-Chunks zum Tool uebertragen | WiFi, LTE | Automatisch | [Ergebnis](#hw-11-spiffs-download) |
 | HW-12 | SPIFFS Delete | Datei wird geloescht, geschuetzte Pfade bleiben blockiert | WiFi, LTE | Automatisch | [Ergebnis](#hw-12-spiffs-delete) |
 | HW-13 | Filesystem Fehlerfaelle | Voller Speicher, fehlende Datei, ungueltiger Pfad | WiFi, LTE | Automatisch | [Ergebnis](#hw-13-filesystem-fehlerfaelle) |
 | HW-14 | Lokale OTA mit CRC OK | Hochgeladene `.bin` wird validiert und geflasht | WiFi, LTE | Teilautomatisch | [Ergebnis](#hw-14-lokale-ota-mit-crc-ok) |
@@ -157,6 +157,29 @@ Logs/Links: Alive Payload `lte: { connected: true, ip: "10.165.104.4",
 mqtt: false, http: false }`.
 Naechste Aktion: SIMCom native MQTT Pfad und Provider/Public-Port Routing auf
 dem Device debuggen.
+
+Nachtest:
+Status: pass
+Datum: 2026-07-27 16:08 +02:00
+Branch: main
+Commit: this commit
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: LTE, `simcom-native-mqtt`
+Setup: NanoMQ lokal auf `192.168.0.37:1883`, Public MQTT via
+`eboxster.duckdns.org:8093`, RemoteDeviceManager WebUI auf `8093`.
+Schritte: Firmware per USB/COM12 geflasht, Device ueber Console mit
+`mqtt transport lte` auf LTE geschaltet, danach frische Alive Message
+`duckdns-lte-active-160831` und MQTT-Dateijobs ausgefuehrt.
+Erwartung: SIMCom native MQTT verbindet ueber DuckDNS und publiziert/subscribed
+weiter ueber LTE.
+Beobachtung: Seriell: `Modem MQTT connect eboxster.duckdns.org:8093` und
+`Modem MQTT connect -> OK`; danach alle RemoteDeviceManager Subscribes und
+Publishes OK. Alive meldet `active_link=lte`, `transport=simcom-native-mqtt`,
+`lte.connected=true`, LTE IP `10.168.31.157`, `lte.mqtt=true`.
+Logs/Links: `/api/state.retained.eboxster/rdm/alive`,
+`eboxster/rdm/state`.
+Naechste Aktion: Langzeittest und Broker-Reconnect-Test nachziehen.
 
 ### HW-04 WiFi HTTP Data Plane
 
@@ -321,6 +344,30 @@ Testdatei. Delete Job `job-f41a17509094` meldete `status=failed`,
 Logs/Links: `eboxster/fs/result` Job `job-f41a17509094`.
 Naechste Aktion: Nach erfolgreichem Upload erneut testen; keine bestehenden
 Produktivdateien fuer Delete-Test verwenden.
+
+Nachtest:
+Status: pass
+Datum: 2026-07-27 16:07 +02:00
+Branch: main
+Commit: this commit
+Firmware-Version: dev
+Device-ID: eboxster
+Transport: LTE, `simcom-native-mqtt`
+Setup: Device aktiv auf LTE-MQTT ueber `eboxster.duckdns.org:8093`; Datei
+`/duckdns-lte-proof.txt`, 57 B, CRC32 `fe9adc61`.
+Schritte: `POST /api/files/upload`, danach `list`, `download` und `delete`
+ueber die RemoteDeviceManager WebUI/API ausgefuehrt.
+Erwartung: `put_mqtt`, `get_mqtt` und `delete` enden mit `status=ok`; Download
+hat dieselbe CRC32 wie Upload; HTTP-Zaehlung bleibt 0.
+Beobachtung: Upload Job `job-18b6b2f1bb4d` mit 1 Chunk und CRC32 `fe9adc61`;
+Download Job `job-4d475ae39ea7` erzeugte lokale Datei
+`job-4d475ae39ea7-duckdns-lte-proof.txt`, 57 B, CRC32 `fe9adc61`,
+`status=ok`; Delete Job `job-5019fef198fd` meldete `status=ok`.
+Transferstatistik nach Test: LTE MQTT up `9873` B, down `1613` B; LTE HTTP
+up/down `0` B.
+Logs/Links: `/api/state.file_downloads.job-4d475ae39ea7`,
+`/api/state.transfer_stats`, `eboxster/fs/result`.
+Naechste Aktion: Groessere Dateien bis `max_file_bytes` und Fehlerfaelle testen.
 
 ### HW-13 Filesystem Fehlerfaelle
 
