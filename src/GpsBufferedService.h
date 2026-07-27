@@ -50,8 +50,12 @@ class GpsBufferedService {
 
   BufferedGpsTime getTime() const;
   BufferedGpsInfo getGpsInformation() const;
+  bool started() const;
   bool gpsPowerSeen() const;
   bool lastPollOk() const;
+  uint32_t lastPollAttemptMs() const;
+  uint32_t lastFixMs() const;
+  bool fixEverSeen() const;
 
  private:
   void cacheGpsInfo(const GPSInfo& info);
@@ -62,10 +66,16 @@ class GpsBufferedService {
   bool lastPollOk_ = false;
   bool enableAttempted_ = false;
   bool enableRequestActive_ = false;
+  bool hotStartRequested_ = false;
+  bool fixEverSeen_ = false;
   uint32_t pollIntervalMs_ = 5000;
   uint32_t enableRetryMs_ = 30000;
+  uint32_t startedMs_ = 0;
   uint32_t nextPollMs_ = 0;
   uint32_t nextEnableCheckMs_ = 0;
+  uint32_t lastPollAttemptMs_ = 0;
+  uint32_t lastFixMs_ = 0;
+  uint32_t lastColdStartMs_ = 0;
   BufferedGpsTime time_;
   BufferedGpsInfo gps_;
 };

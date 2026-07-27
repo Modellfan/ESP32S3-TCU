@@ -860,10 +860,13 @@ function initVehicleMap(){
 }
 function renderVehicleMap(gps){
   const valid=!!(gps&&gps.valid&&gps.has_fix&&Number.isFinite(Number(gps.lat))&&Number.isFinite(Number(gps.lon))&&(Number(gps.lat)!==0||Number(gps.lon)!==0));
+  const powered=!!(gps&&(gps.powered||gps.gps_power_seen));
+  const searching=!!(gps&&(gps.searching||powered)&&!valid);
   const speedKmh=Math.max(0,Number(gps.speed_mps||0)*3.6);
   $('mapSpeed').textContent=speedKmh.toFixed(speedKmh>=100?0:1);
-  $('mapStatus').textContent=valid?'GPS fix live':'No GPS fix';
-  $('mapSatellites').textContent='Satellites '+(gps.sat_total??'-');
+  $('mapStatus').textContent=valid?'GPS fix live':(searching?'Searching for GPS fix':(powered?'GNSS waiting':'GNSS off'));
+  const pollAge=gps&&gps.poll_age_ms!=null&&gps.poll_age_ms>=0?(' - poll '+fmtUptime(gps.poll_age_ms)):'';
+  $('mapSatellites').textContent='Satellites '+(gps&&gps.sat_total!=null?gps.sat_total:'-')+pollAge;
   if(!valid){$('mapCoords').textContent='-';return}
   const lat=Number(gps.lat), lon=Number(gps.lon);
   $('mapCoords').textContent=lat.toFixed(6)+', '+lon.toFixed(6);
@@ -962,7 +965,9 @@ function render(){
   const lteIp=(alive.lte&&alive.lte.ip)||st.lte_ip||st.cellular_ip||'-';
   const checkBadges=(mqtt)=>badge(!!mqtt,'MQTT Alive');
   const gpsLat=Number(gps.lat||0), gpsLon=Number(gps.lon||0);
-  const gpsPosition=(gps.has_fix||gps.valid)?(gpsLat.toFixed(6)+', '+gpsLon.toFixed(6)):'-';
+  const gpsPosition=gps.has_fix?(gpsLat.toFixed(6)+', '+gpsLon.toFixed(6)):'-';
+  const gpsPowered=!!(gps.powered||gps.gps_power_seen);
+  const gpsSearching=!!(gps.searching||gpsPowered)&&!gps.has_fix;
   $('deviceConnectivity').innerHTML=[
     ['Active link',activeLink.toUpperCase()],
     ['WiFi',wifiOk?badge(true,'connected')+' '+wifiIp:badge(false,'offline')+' '+wifiIp],
@@ -979,12 +984,14 @@ function render(){
     ['SPIFFS',fmtBytes(fs.used)+' / '+fmtBytes(fs.total)]
   ].map(statusRow).join('');
   $('deviceGpsSummary').innerHTML=[
-    ['Fix',gps.has_fix?badge(true,'fix'):badge(false,'no fix')],
+    ['Receiver',gpsPowered?badge(true,'powered'):badge(false,'off')],
+    ['Fix',gps.has_fix?badge(true,'fix'):(gpsSearching?'<span class="badge warn"><span class="dot warn"></span>searching</span>':badge(false,'no fix'))],
     ['Position',gpsPosition],
     ['Speed',(Number(gps.speed_mps||0)*3.6).toFixed(1)+' km/h'],
     ['Satellites',gps.sat_total??'-'],
     ['UTC',gps.utc_valid?(gps.utc||'-'):'-'],
-    ['Age',gps.age_ms!=null&&gps.age_ms>=0?fmtUptime(gps.age_ms):'-']
+    ['Last poll',gps.poll_age_ms!=null&&gps.poll_age_ms>=0?fmtUptime(gps.poll_age_ms):'-'],
+    ['Last fix',gps.last_fix_age_ms!=null&&gps.last_fix_age_ms>=0?fmtUptime(gps.last_fix_age_ms):(gps.fix_seen?'stale':'never')]
   ].map(statusRow).join('');
   renderVehicleMap(gps);
   const consoleMsgs=(state.messages||[]).filter(m=>m.topic.endsWith('/console/out'));

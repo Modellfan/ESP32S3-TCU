@@ -5,6 +5,8 @@
 namespace {
 
 constexpr float KNOTS_TO_METERS_PER_SECOND = 0.514444F;
+constexpr uint32_t FIRST_COLD_START_AFTER_MS = 10UL * 60UL * 1000UL;
+constexpr uint32_t COLD_START_RETRY_MS = 15UL * 60UL * 1000UL;
 
 bool validUtc(const tcall::BufferedGpsTime& time)
 {
@@ -23,8 +25,14 @@ void GpsBufferedService::begin(uint32_t pollIntervalMs, uint32_t enableRetryMs)
 {
   pollIntervalMs_ = pollIntervalMs;
   enableRetryMs_ = enableRetryMs;
+  startedMs_ = millis();
   nextPollMs_ = 0;
   nextEnableCheckMs_ = 0;
+  lastPollAttemptMs_ = 0;
+  lastColdStartMs_ = 0;
+  hotStartRequested_ = false;
+  enableAttempted_ = false;
+  enableRequestActive_ = false;
   started_ = true;
 }
 
@@ -35,6 +43,9 @@ void GpsBufferedService::stop()
   lastPollOk_ = false;
   enableAttempted_ = false;
   enableRequestActive_ = false;
+  hotStartRequested_ = false;
+  lastPollAttemptMs_ = 0;
+  lastColdStartMs_ = 0;
 }
 
 void GpsBufferedService::runner(Stream* log)
@@ -77,7 +88,28 @@ void GpsBufferedService::runner(Stream* log)
   if (!gpsPowerSeen_ || static_cast<int32_t>(now - nextPollMs_) < 0) {
     return;
   }
+
+  if (!hotStartRequested_) {
+    modem_.gpsHotStart();
+    hotStartRequested_ = true;
+    if (log) {
+      (*log).println("GNSS hot start requested.");
+    }
+  }
+
+  if (!gps_.hasFix && (now - startedMs_) >= FIRST_COLD_START_AFTER_MS &&
+      (lastColdStartMs_ == 0 ||
+       (now - lastColdStartMs_) >= COLD_START_RETRY_MS)) {
+    if (modem_.gpsColdStart()) {
+      lastColdStartMs_ = now;
+      if (log) {
+        (*log).println("GNSS cold start requested after extended no-fix period.");
+      }
+    }
+  }
+
   nextPollMs_ = now + pollIntervalMs_;
+  lastPollAttemptMs_ = now;
 
   GPSInfo info;
   lastPollOk_ = modem_.gpsExtended(info);
@@ -101,9 +133,29 @@ bool GpsBufferedService::gpsPowerSeen() const
   return gpsPowerSeen_;
 }
 
+bool GpsBufferedService::started() const
+{
+  return started_;
+}
+
 bool GpsBufferedService::lastPollOk() const
 {
   return lastPollOk_;
+}
+
+uint32_t GpsBufferedService::lastPollAttemptMs() const
+{
+  return lastPollAttemptMs_;
+}
+
+uint32_t GpsBufferedService::lastFixMs() const
+{
+  return lastFixMs_;
+}
+
+bool GpsBufferedService::fixEverSeen() const
+{
+  return fixEverSeen_;
 }
 
 void GpsBufferedService::cacheGpsInfo(const GPSInfo& info)
@@ -143,6 +195,10 @@ void GpsBufferedService::cacheGpsInfo(const GPSInfo& info)
                 fabs(gps_.latitude) > 0.000001 &&
                 fabs(gps_.longitude) > 0.000001 &&
                 gps_.totalSatellites > 0;
+  if (gps_.hasFix) {
+    fixEverSeen_ = true;
+    lastFixMs_ = now;
+  }
 }
 
 }  // namespace tcall

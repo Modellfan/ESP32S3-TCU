@@ -566,6 +566,21 @@ String gpsJson()
   json += time.second;
   json += "\",\"age_ms\":";
   json += info.valid ? String(millis() - info.updatedMs) : String(-1);
+  json += ",\"runner_started\":";
+  json += gpsBuffer.started() ? "true" : "false";
+  json += ",\"powered\":";
+  json += gpsBuffer.gpsPowerSeen() ? "true" : "false";
+  json += ",\"poll_ok\":";
+  json += gpsBuffer.lastPollOk() ? "true" : "false";
+  json += ",\"poll_age_ms\":";
+  json += gpsBuffer.lastPollAttemptMs() > 0 ? String(millis() - gpsBuffer.lastPollAttemptMs())
+                                             : String(-1);
+  json += ",\"searching\":";
+  json += (gpsBuffer.started() && gpsBuffer.gpsPowerSeen() && !info.hasFix) ? "true" : "false";
+  json += ",\"fix_seen\":";
+  json += gpsBuffer.fixEverSeen() ? "true" : "false";
+  json += ",\"last_fix_age_ms\":";
+  json += gpsBuffer.lastFixMs() > 0 ? String(millis() - gpsBuffer.lastFixMs()) : String(-1);
   json += '}';
   return json;
 }

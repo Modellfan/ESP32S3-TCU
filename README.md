@@ -409,8 +409,8 @@ Copy-Item src\LocalConfig.example.h src\LocalConfig.h
 
 `src/LocalConfig.h` is ignored by git. Put WiFi, OTA hostname, SIM PIN, and APN values
 there. Also set `TCALL_MQTT_HOST` to the static LAN IP or DNS name of your MQTT broker.
-Set `TCALL_GPS_AUTOSTART` to `1` if the board should start the buffered GNSS runner
-automatically and publish GPS cache values after boot.
+GNSS autostart is enabled by default. Set `TCALL_GPS_AUTOSTART` to `0` only if the
+board should keep the GNSS receiver powered off after boot.
 Do not commit real passwords, SIM PINs, phone numbers, IMSI/ICCID/IMEI values, or proof
 logs.
 

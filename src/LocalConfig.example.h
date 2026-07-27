@@ -31,7 +31,7 @@
 #define TCALL_RDM_LTE_ALIVE_AUTOSTART 1
 #define TCALL_FW_VERSION "dev"
 
-#define TCALL_GPS_AUTOSTART 0
+#define TCALL_GPS_AUTOSTART 1
 
 // GitHub latest-release LTE OTA demo. Publish a release with a firmware .bin asset
 // and a CRC sidecar containing the expected 8-digit hex CRC32, for example:
