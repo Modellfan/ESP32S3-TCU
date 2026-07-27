@@ -5,6 +5,7 @@
 #include <SPIFFS.h>
 #include <WiFi.h>
 #include <ctype.h>
+#include <esp_sleep.h>
 #include <math.h>
 #include <string.h>
 
@@ -23,6 +24,10 @@ constexpr const char* MQTT_CELLULAR_HOST = TCALL_MQTT_CELLULAR_HOST;
 constexpr uint16_t MQTT_CELLULAR_PORT = TCALL_MQTT_CELLULAR_PORT;
 constexpr bool MQTT_CELLULAR_NATIVE = TCALL_MQTT_CELLULAR_NATIVE != 0;
 constexpr bool RDM_LTE_ALIVE_AUTOSTART = TCALL_RDM_LTE_ALIVE_AUTOSTART != 0;
+constexpr bool RDM_STANDBY_ENABLED = TCALL_RDM_STANDBY_ENABLED != 0;
+constexpr uint32_t RDM_STANDBY_AFTER_MS = TCALL_RDM_STANDBY_AFTER_MS;
+constexpr uint32_t RDM_STANDBY_WAKE_INTERVAL_MS = TCALL_RDM_STANDBY_WAKE_INTERVAL_MS;
+constexpr uint32_t RDM_STANDBY_PROBE_WINDOW_MS = TCALL_RDM_STANDBY_PROBE_WINDOW_MS;
 constexpr const char* MQTT_TRANSPORT = TCALL_MQTT_TRANSPORT;
 constexpr uint16_t MQTT_PORT = TCALL_MQTT_PORT;
 constexpr const char* MQTT_USER = TCALL_MQTT_USER;
@@ -196,6 +201,21 @@ class SwitchableMqttTransport : public RemoteDeviceManager::MqttTransport {
 
 SwitchableMqttTransport switchableMqttTransport(wifiMqttTransport, cellularMqttTransport);
 RemoteDeviceManager::Manager* remoteManager = nullptr;
+
+enum class RemotePowerState {
+  Awake,
+  EnteringStandby,
+  StandbyProbe,
+};
+
+RemotePowerState remotePowerState = RemotePowerState::Awake;
+uint32_t lastRemoteActivityMs = 0;
+uint32_t standbyProbeStartMs = 0;
+bool standbyNetworksPrepared = false;
+
+const char* remotePowerStateName();
+void setupWifi();
+void restoreAwakePeripherals();
 
 struct ProbeEndpoint {
   String host;
@@ -606,6 +626,15 @@ String statusJson()
   json += gpsBuffer.gpsPowerSeen() ? "true" : "false";
   json += ",\"gps_last_poll_ok\":";
   json += gpsBuffer.lastPollOk() ? "true" : "false";
+  json += ",\"remote_power_state\":\"";
+  json += remotePowerStateName();
+  json += "\",\"standby_enabled\":";
+  json += RDM_STANDBY_ENABLED ? "true" : "false";
+  json += ",\"standby_in_ms\":";
+  const uint32_t idleMs = millis() - lastRemoteActivityMs;
+  json += remotePowerState == RemotePowerState::Awake && idleMs < RDM_STANDBY_AFTER_MS
+              ? String(RDM_STANDBY_AFTER_MS - idleMs)
+              : String(0);
   json += '}';
   return json;
 }
@@ -1197,6 +1226,44 @@ void handleMqttCommand(String args, Stream& out)
   out.println("Usage: mqtt status|publish|transport <wifi|lte>");
 }
 
+const char* remotePowerStateName()
+{
+  switch (remotePowerState) {
+    case RemotePowerState::Awake: return "awake";
+    case RemotePowerState::EnteringStandby: return "entering_standby";
+    case RemotePowerState::StandbyProbe: return "standby_probe";
+  }
+  return "unknown";
+}
+
+void noteRemoteActivity(const char* topicSuffix)
+{
+  lastRemoteActivityMs = millis();
+  if (remotePowerState != RemotePowerState::Awake) {
+    remotePowerState = RemotePowerState::Awake;
+    standbyNetworksPrepared = false;
+    Serial.print("RemoteDeviceManager activity woke device: ");
+    Serial.println(topicSuffix ? topicSuffix : "unknown");
+    restoreAwakePeripherals();
+  }
+}
+
+void restoreAwakePeripherals()
+{
+  if (switchableMqttTransport.usingCellular()) {
+    modemService.wakeFromStandby(Serial);
+    ensureCellularData(Serial);
+  } else {
+    if (WiFi.status() != WL_CONNECTED) {
+      setupWifi();
+    }
+    modemService.wakeFromStandby(Serial);
+  }
+  if (GPS_AUTOSTART) {
+    gpsBuffer.begin();
+  }
+}
+
 void handleOtaCommand(String args, Stream& out)
 {
   String action = nextToken(args);
@@ -1541,6 +1608,86 @@ bool remoteSetTransport(const char* mode, Stream& out)
   return switchableMqttTransport.setMode(requested.c_str(), out);
 }
 
+void prepareNetworksForStandbyProbe()
+{
+  if (standbyNetworksPrepared) {
+    return;
+  }
+
+  if (switchableMqttTransport.usingCellular()) {
+    modemService.wakeFromStandby(Serial);
+    ensureCellularData(Serial);
+  } else {
+    if (WiFi.status() != WL_CONNECTED) {
+      setupWifi();
+    }
+  }
+
+  if (remoteManager) {
+    remoteManager->reconnectNow();
+  }
+  standbyNetworksPrepared = true;
+}
+
+void enterTimedStandby()
+{
+  if (!remoteManager) {
+    return;
+  }
+
+  Serial.println("RemoteDeviceManager standby timeout; entering timed standby.");
+  remoteManager->publishSleepState("sleeping", RDM_STANDBY_WAKE_INTERVAL_MS, "rdm_idle_timeout");
+  delay(150);
+  remoteManager->reconnectNow();
+  gpsBuffer.stop();
+  modemService.enterStandby(Serial);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(RDM_STANDBY_WAKE_INTERVAL_MS) * 1000ULL);
+  esp_light_sleep_start();
+
+  Serial.println("RemoteDeviceManager standby wake; probing MQTT.");
+  standbyProbeStartMs = millis();
+  standbyNetworksPrepared = false;
+  remotePowerState = RemotePowerState::StandbyProbe;
+}
+
+void handleRemotePowerState()
+{
+  if (!RDM_STANDBY_ENABLED || !remoteManager) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  if (remotePowerState == RemotePowerState::Awake) {
+    if (now - lastRemoteActivityMs >= RDM_STANDBY_AFTER_MS) {
+      remotePowerState = RemotePowerState::EnteringStandby;
+    }
+    return;
+  }
+
+  if (remotePowerState == RemotePowerState::EnteringStandby) {
+    enterTimedStandby();
+    return;
+  }
+
+  if (remotePowerState == RemotePowerState::StandbyProbe) {
+    prepareNetworksForStandbyProbe();
+    ArduinoOTA.handle();
+    pollMqtt();
+    if (remotePowerState == RemotePowerState::Awake) {
+      if (remoteManager) {
+        remoteManager->publishSleepState("awake", 0, "remote_activity");
+      }
+      return;
+    }
+    if (millis() - standbyProbeStartMs >= RDM_STANDBY_PROBE_WINDOW_MS) {
+      remotePowerState = RemotePowerState::EnteringStandby;
+    }
+  }
+}
+
 void setupRemoteDeviceManager()
 {
   if (!mqttConfigured()) {
@@ -1571,10 +1718,12 @@ void setupRemoteDeviceManager()
   config.otaCommand = remoteOtaCommand;
   config.transportSet = remoteSetTransport;
   config.connectivityJson = connectivityJson;
+  config.activity = noteRemoteActivity;
 
   switchableMqttTransport.setMode(MQTT_TRANSPORT, Serial);
   remoteManager = new RemoteDeviceManager::Manager(switchableMqttTransport);
   remoteManager->begin(config);
+  lastRemoteActivityMs = millis();
   Serial.print("RemoteDeviceManager started with ");
   Serial.println(remoteManager->transportName());
 }
@@ -1605,9 +1754,15 @@ void setup()
 
 void loop()
 {
+  pollStreamConsole(Serial, serialCommandLine);
+  handleRemotePowerState();
+  if (remotePowerState != RemotePowerState::Awake) {
+    delay(1);
+    return;
+  }
+
   ArduinoOTA.handle();
   gpsBuffer.runner();
-  pollStreamConsole(Serial, serialCommandLine);
   pollWifiConsole();
   pollMqtt();
   delay(1);

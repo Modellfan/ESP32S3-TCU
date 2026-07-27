@@ -79,6 +79,25 @@ The device publishes retained state:
 
 `eboxster/console/*` is the console topic family.
 
+## Standby State Machine
+
+The ESP32 keeps a RemoteDeviceManager activity timer. Any authenticated command or
+`rdm/alive/request` resets it. With the default firmware settings, no activity for
+60 seconds triggers timed standby:
+
+- `rdm/state` is published with `sleep_state:"sleeping"` and `sleep_ms:15000`.
+- GNSS is stopped.
+- MQTT is disconnected.
+- WiFi is powered down.
+- The A7670 is put into standby with `AT+CSCLK=1` and DTR high.
+- The ESP32 enters timer light sleep.
+
+Every 15 seconds the ESP32 wakes, restores the active MQTT transport enough to poll
+for commands, and listens for `TCALL_RDM_STANDBY_PROBE_WINDOW_MS` milliseconds. If an
+authenticated message arrives, the device returns to `awake`; otherwise it re-enters
+standby. The WebUI sends `rdm/alive/request` periodically while open, so an open
+RemoteDeviceManager page keeps the device awake.
+
 ## MQTT Console
 
 Controller publishes:

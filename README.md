@@ -411,6 +411,10 @@ Copy-Item src\LocalConfig.example.h src\LocalConfig.h
 there. Also set `TCALL_MQTT_HOST` to the static LAN IP or DNS name of your MQTT broker.
 GNSS autostart is enabled by default. Set `TCALL_GPS_AUTOSTART` to `0` only if the
 board should keep the GNSS receiver powered off after boot.
+RemoteDeviceManager standby is enabled by default. `TCALL_RDM_STANDBY_AFTER_MS`
+defaults to 60000 ms; when no authenticated RemoteDeviceManager command or alive
+request arrives before that timeout, the ESP32 and A7670 enter timed standby and wake
+every 15 seconds for a short MQTT probe window.
 Do not commit real passwords, SIM PINs, phone numbers, IMSI/ICCID/IMEI values, or proof
 logs.
 

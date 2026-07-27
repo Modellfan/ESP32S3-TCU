@@ -778,21 +778,27 @@ void Manager::handleMqttMessage(const String& topicName, const String& payload)
   }
   if (topicName == topic("console/cmd")) {
     if (!verifyIncomingAuth(decodedPayload)) return;
+    if (config_.activity) config_.activity("console/cmd");
     handleConsoleCommand(decodedPayload);
   } else if (topicName == topic("fs/jobs")) {
     if (!verifyIncomingAuth(decodedPayload)) return;
+    if (config_.activity) config_.activity("fs/jobs");
     handleFileJob(decodedPayload);
   } else if (topicName == topic("fs/data")) {
     if (!verifyIncomingAuth(decodedPayload)) return;
+    if (config_.activity) config_.activity("fs/data");
     handleFileData(decodedPayload);
   } else if (topicName == topic("ota/jobs")) {
     if (!verifyIncomingAuth(decodedPayload)) return;
+    if (config_.activity) config_.activity("ota/jobs");
     handleOtaJob(decodedPayload);
   } else if (topicName == topic("rdm/alive/request")) {
     if (!verifyIncomingAuth(decodedPayload)) return;
+    if (config_.activity) config_.activity("rdm/alive/request");
     handleAliveRequest(decodedPayload);
   } else if (topicName == topic("rdm/transport/set")) {
     if (!verifyIncomingAuth(decodedPayload)) return;
+    if (config_.activity) config_.activity("rdm/transport/set");
     handleTransportSet(decodedPayload);
   }
 }
@@ -800,6 +806,13 @@ void Manager::handleMqttMessage(const String& topicName, const String& payload)
 bool Manager::connected() const
 {
   return mqtt_.connected();
+}
+
+void Manager::reconnectNow()
+{
+  mqtt_.disconnect(config_.log);
+  subscribed_ = false;
+  nextReconnectMs_ = 0;
 }
 
 const char* Manager::transportName() const

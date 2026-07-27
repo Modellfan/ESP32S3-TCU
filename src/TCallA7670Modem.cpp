@@ -529,6 +529,32 @@ bool TCallA7670Modem::dataActive()
   return modem.isGprsConnected() || modem.getNetworkActive();
 }
 
+bool TCallA7670Modem::enterStandby(Stream& log)
+{
+  log.println("Entering modem standby.");
+  gpsEnablePending = false;
+  gpsEnableResponse = "";
+  disableGps();
+  mqttDisconnect(&log);
+  deactivateData();
+  printAt(log, "+CSCLK=1", 5000);
+  digitalWrite(MODEM_DTR_PIN, HIGH);
+  return true;
+}
+
+bool TCallA7670Modem::wakeFromStandby(Stream& log)
+{
+  log.println("Waking modem from standby.");
+  digitalWrite(MODEM_DTR_PIN, LOW);
+  delay(250);
+  printAt(log, "+CSCLK=0", 5000);
+  printAt(log, "+CFUN=1", 15000);
+  if (waitOnline(15000, log)) {
+    return true;
+  }
+  return restart(log, 45000);
+}
+
 String TCallA7670Modem::localIP()
 {
   return modem.getLocalIP();

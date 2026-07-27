@@ -63,6 +63,7 @@ using JsonCallback = String (*)();
 using OtaCommandCallback = bool (*)(const char* command, Stream& out);
 using TransportSetCallback = bool (*)(const char* mode, Stream& out);
 using ConnectivityJsonCallback = String (*)(const String& requestPayload);
+using ActivityCallback = void (*)(const char* topicSuffix);
 
 struct Config {
   const char* deviceId = "eboxster";
@@ -83,6 +84,7 @@ struct Config {
   OtaCommandCallback otaCommand = nullptr;
   TransportSetCallback transportSet = nullptr;
   ConnectivityJsonCallback connectivityJson = nullptr;
+  ActivityCallback activity = nullptr;
 };
 
 class Manager {
@@ -95,6 +97,7 @@ class Manager {
   bool publishSleepState(const char* sleepState, uint32_t sleepMs = 0, const char* reason = "");
   bool publishTelemetry();
   void handleMqttMessage(const String& topic, const String& payload);
+  void reconnectNow();
   bool connected() const;
   const char* transportName() const;
 

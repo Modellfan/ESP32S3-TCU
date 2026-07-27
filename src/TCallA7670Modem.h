@@ -82,6 +82,8 @@ class TCallA7670Modem {
                     uint8_t attempts = 3);
   bool deactivateData();
   bool dataActive();
+  bool enterStandby(Stream& log);
+  bool wakeFromStandby(Stream& log);
   String localIP();
   Client& cellularClient();
   Client& cellularSecureClient();
