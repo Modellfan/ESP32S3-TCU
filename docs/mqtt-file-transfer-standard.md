@@ -3,8 +3,10 @@
 Version: `rdm-1`
 
 RemoteDeviceManager uses MQTT for command, status, console, and bounded SPIFFS file
-transfer. File bytes are carried as small hex-encoded MQTT JSON chunks so the same
-wire protocol works over WiFi and LTE without inbound connectivity to the ESP32.
+transfer. The protocol is logically JSON, but controller payloads may be sent as
+plain UTF-8 JSON or as a CBOR envelope to reduce MQTT traffic. File bytes are
+carried as bounded MQTT chunks so the same wire protocol works over WiFi and LTE
+without inbound connectivity to the ESP32.
 OTA images remain URL-based because full firmware binaries are too large for this
 simple JSON chunk path.
 
@@ -30,8 +32,31 @@ eboxster/ota/result
 eboxster/ota/state
 ```
 
-All payloads are UTF-8 JSON. Jobs include `schema`, `msg_id`, `device_id`, `job_id`,
-`op`, and optional operation fields.
+## Payload Encoding
+
+All messages are defined as JSON objects. Plain UTF-8 JSON remains valid on every
+command topic for backwards compatibility.
+
+Controllers may also send the same object as a CBOR envelope:
+
+```text
+~<base64url-without-padding-of-cbor-map>
+```
+
+The leading `~` keeps the payload ASCII-safe for the SIMCom native MQTT path, whose
+publish API is text-oriented. The device decodes this envelope before authentication
+and handling, so HMAC signatures are calculated over the same logical fields as JSON.
+When `encoding` is `hex` and the `data` field contains file bytes, the Python tool may
+encode `data` as a CBOR byte string; the device normalizes it back to lowercase hex
+before processing.
+
+The Python WebUI defaults to `--mqtt-payload-format auto`, which chooses the smaller
+JSON or CBOR-envelope representation per outgoing controller message. Use
+`--mqtt-payload-format json` to force legacy JSON output or `--mqtt-payload-format
+cbor` to force CBOR envelopes.
+
+Jobs include `schema`, `msg_id`, `device_id`, `job_id`, `op`, and optional operation
+fields.
 
 ## Device State
 
@@ -151,6 +176,9 @@ chunks on `fs/data`:
   "data": "7b226d6f6465223a2274657374227d"
 }
 ```
+
+In CBOR-envelope mode this is the same logical object, but `data` may be encoded as a
+CBOR byte string on the wire instead of hex text.
 
 The device ACKs each chunk on `fs/ack`:
 

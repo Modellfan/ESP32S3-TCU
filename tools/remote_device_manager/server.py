@@ -151,12 +151,154 @@ def recv_packet(sock: socket.socket) -> tuple[int, int, bytes]:
     return first >> 4, first & 0x0F, recv_exact(sock, remaining)
 
 
-def parse_publish(flags: int, payload: bytes) -> tuple[str, str, bool]:
+def parse_publish(flags: int, payload: bytes) -> tuple[str, bytes, bool]:
     topic_len = struct.unpack("!H", payload[:2])[0]
     topic_end = 2 + topic_len
     topic = payload[2:topic_end].decode("utf-8", errors="replace")
-    text = payload[topic_end:].decode("utf-8", errors="replace")
-    return topic, text, bool(flags & 1)
+    return topic, payload[topic_end:], bool(flags & 1)
+
+
+def _cbor_uint(major: int, value: int) -> bytes:
+    if value < 24:
+        return bytes([(major << 5) | value])
+    if value <= 0xFF:
+        return bytes([(major << 5) | 24, value])
+    if value <= 0xFFFF:
+        return bytes([(major << 5) | 25]) + struct.pack("!H", value)
+    if value <= 0xFFFFFFFF:
+        return bytes([(major << 5) | 26]) + struct.pack("!I", value)
+    return bytes([(major << 5) | 27]) + struct.pack("!Q", value)
+
+
+def _cbor_encode(value: object) -> bytes:
+    if value is False:
+        return b"\xf4"
+    if value is True:
+        return b"\xf5"
+    if value is None:
+        return b"\xf6"
+    if isinstance(value, int):
+        return _cbor_uint(0, value) if value >= 0 else _cbor_uint(1, -1 - value)
+    if isinstance(value, bytes):
+        return _cbor_uint(2, len(value)) + value
+    if isinstance(value, str):
+        raw = value.encode("utf-8")
+        return _cbor_uint(3, len(raw)) + raw
+    if isinstance(value, list):
+        return _cbor_uint(4, len(value)) + b"".join(_cbor_encode(item) for item in value)
+    if isinstance(value, dict):
+        items = [(str(key), val) for key, val in value.items() if val is not None]
+        return _cbor_uint(5, len(items)) + b"".join(_cbor_encode(key) + _cbor_encode(val) for key, val in items)
+    if isinstance(value, float):
+        return b"\xfb" + struct.pack("!d", value)
+    return _cbor_encode(str(value))
+
+
+def _cbor_read_uint(data: bytes, pos: int, ai: int) -> tuple[int, int]:
+    if ai < 24:
+        return ai, pos
+    sizes = {24: 1, 25: 2, 26: 4, 27: 8}
+    size = sizes.get(ai)
+    if size is None or pos + size > len(data):
+        raise ValueError("invalid cbor integer")
+    return int.from_bytes(data[pos:pos + size], "big"), pos + size
+
+
+def _cbor_decode_value(data: bytes, pos: int = 0) -> tuple[object, int]:
+    if pos >= len(data):
+        raise ValueError("truncated cbor")
+    first = data[pos]
+    pos += 1
+    major, ai = first >> 5, first & 0x1F
+    if major == 0:
+        return _cbor_read_uint(data, pos, ai)
+    if major == 1:
+        value, pos = _cbor_read_uint(data, pos, ai)
+        return -1 - value, pos
+    if major in (2, 3):
+        length, pos = _cbor_read_uint(data, pos, ai)
+        raw = data[pos:pos + length]
+        if len(raw) != length:
+            raise ValueError("truncated cbor bytes")
+        return (raw if major == 2 else raw.decode("utf-8")), pos + length
+    if major == 4:
+        length, pos = _cbor_read_uint(data, pos, ai)
+        out = []
+        for _ in range(length):
+            item, pos = _cbor_decode_value(data, pos)
+            out.append(item)
+        return out, pos
+    if major == 5:
+        length, pos = _cbor_read_uint(data, pos, ai)
+        out = {}
+        for _ in range(length):
+            key, pos = _cbor_decode_value(data, pos)
+            val, pos = _cbor_decode_value(data, pos)
+            out[str(key)] = val
+        return out, pos
+    if major == 7:
+        if ai == 20:
+            return False, pos
+        if ai == 21:
+            return True, pos
+        if ai in (22, 23):
+            return None, pos
+        if ai == 27 and pos + 8 <= len(data):
+            return struct.unpack("!d", data[pos:pos + 8])[0], pos + 8
+    raise ValueError("unsupported cbor item")
+
+
+def _bytes_for_cbor(payload: object) -> object:
+    if isinstance(payload, dict):
+        out = {}
+        for key, value in payload.items():
+            if key == "data" and isinstance(value, str) and payload.get("encoding") == "hex":
+                try:
+                    out[key] = bytes.fromhex(value)
+                    continue
+                except ValueError:
+                    pass
+            out[key] = _bytes_for_cbor(value)
+        return out
+    if isinstance(payload, list):
+        return [_bytes_for_cbor(item) for item in payload]
+    return payload
+
+
+def encode_mqtt_payload(payload: dict, payload_format: str) -> bytes:
+    json_payload = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    if payload_format == "json":
+        return json_payload
+    cbor = _cbor_encode(_bytes_for_cbor(payload))
+    cbor_payload = b"~" + base64.urlsafe_b64encode(cbor).rstrip(b"=")
+    if payload_format == "auto":
+        return cbor_payload if len(cbor_payload) < len(json_payload) else json_payload
+    return cbor_payload
+
+
+def decode_mqtt_payload(payload: bytes) -> object:
+    if payload.startswith(b"~"):
+        encoded = payload[1:]
+        decoded = base64.urlsafe_b64decode(encoded + b"=" * ((4 - len(encoded) % 4) % 4))
+        value, pos = _cbor_decode_value(decoded)
+        if pos != len(decoded):
+            raise ValueError("trailing cbor data")
+
+        def normalize(obj: object) -> object:
+            if isinstance(obj, bytes):
+                return obj.hex()
+            if isinstance(obj, list):
+                return [normalize(item) for item in obj]
+            if isinstance(obj, dict):
+                return {key: normalize(val) for key, val in obj.items()}
+            return obj
+
+        return normalize(value)
+    text = payload.decode("utf-8", errors="replace")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
 
 
 AUTH_FIELDS = (
@@ -238,8 +380,9 @@ class MqttClient:
             raise OSError("MQTT CONNACK failed")
         self.sock = sock
 
-    def publish(self, topic: str, payload: str, retain: bool = False) -> None:
-        body = encstr(topic) + payload.encode("utf-8")
+    def publish(self, topic: str, payload: bytes | str, retain: bool = False) -> None:
+        raw = payload.encode("utf-8") if isinstance(payload, str) else payload
+        body = encstr(topic) + raw
         with self.lock:
             if self.sock is None:
                 raise OSError("MQTT is not connected")
@@ -254,7 +397,7 @@ class MqttClient:
                 raise OSError("MQTT is not connected")
             self.sock.sendall(b"\x82" + enclen(len(body)) + body)
 
-    def read(self) -> tuple[str, str, bool] | None:
+    def read(self) -> tuple[str, bytes, bool] | None:
         if self.sock is None:
             return None
         try:
@@ -302,25 +445,25 @@ class AppState:
         payload.setdefault("job_id", f"job-{uuid.uuid4().hex[:12]}")
         payload.setdefault("created_at", dt.datetime.now(dt.UTC).isoformat())
         sign_payload(payload, self.args.shared_secret)
-        encoded = json.dumps(payload, separators=(",", ":"))
+        encoded = encode_mqtt_payload(payload, self.args.mqtt_payload_format)
         self.mqtt.publish(self.topic(suffix), encoded)
-        self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
+        self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded))
         return payload
 
     def publish_control(self, suffix: str, payload: dict) -> dict:
         payload.setdefault("schema", "rdm-1")
         payload.setdefault("device_id", self.args.device)
         sign_payload(payload, self.args.shared_secret)
-        encoded = json.dumps(payload, separators=(",", ":"))
+        encoded = encode_mqtt_payload(payload, self.args.mqtt_payload_format)
         self.mqtt.publish(self.topic(suffix), encoded)
-        self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
+        self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded))
         return payload
 
-    def record(self, topic: str, payload: str, retain: bool) -> None:
+    def record(self, topic: str, payload: bytes, retain: bool) -> None:
         try:
-            parsed: object = json.loads(payload)
-        except json.JSONDecodeError:
-            parsed = payload
+            parsed = decode_mqtt_payload(payload)
+        except (json.JSONDecodeError, ValueError):
+            parsed = payload.decode("utf-8", errors="replace")
         topic_prefix = self.args.topic_prefix.rstrip("/") + "/"
         suffix = topic.removeprefix(topic_prefix) if topic.startswith(topic_prefix) else topic
         if suffix == "rdm/alive":
@@ -333,7 +476,7 @@ class AppState:
             self.retained[topic] = parsed
             if suffix not in {"console/cmd", "fs/jobs", "ota/jobs", "rdm/alive/request", "rdm/transport/set"}:
                 link = self._infer_link_unlocked(parsed)
-                self._add_transfer_unlocked(link, "mqtt", "up", len(payload.encode("utf-8")))
+                self._add_transfer_unlocked(link, "mqtt", "up", len(payload))
 
     def _normalize_alive(self, payload: object) -> object:
         if not isinstance(payload, dict) or "w" not in payload:
@@ -454,9 +597,9 @@ class AppState:
                 "data": chunk.hex(),
             }
             sign_payload(payload, self.args.shared_secret)
-            encoded = json.dumps(payload, separators=(",", ":"))
+            encoded = encode_mqtt_payload(payload, self.args.mqtt_payload_format)
             self.mqtt.publish(self.topic("fs/data"), encoded)
-            self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
+            self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded))
             self.wait_for_file_ack(job["job_id"], chunks, {"ok"})
             chunks += 1
             time.sleep(0.05)
@@ -1371,6 +1514,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mqtt-file-max-bytes", type=int, default=16384)
     parser.add_argument("--mqtt-file-chunk-bytes", type=int, default=384)
     parser.add_argument("--mqtt-file-max-chunk-bytes", type=int, default=384)
+    parser.add_argument("--mqtt-payload-format", choices=("auto", "cbor", "json"), default="auto",
+                        help="Outgoing controller MQTT payload format. Auto chooses the smaller JSON/CBOR payload; incoming CBOR and JSON are both accepted.")
     parser.add_argument("--open", action="store_true")
     args = parser.parse_args()
     if not args.local_http_url:

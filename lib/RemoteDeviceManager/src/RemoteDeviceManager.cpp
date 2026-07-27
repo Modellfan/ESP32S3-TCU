@@ -159,6 +159,204 @@ bool constantTimeEquals(const String& left, const String& right)
   return diff == 0;
 }
 
+int base64UrlValue(char c)
+{
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '-') return 62;
+  if (c == '_') return 63;
+  return -1;
+}
+
+bool decodeBase64Url(const String& input, uint8_t* out, size_t maxLen, size_t& outLen)
+{
+  outLen = 0;
+  uint32_t buffer = 0;
+  uint8_t bits = 0;
+  for (size_t i = 0; i < input.length(); ++i) {
+    const int value = base64UrlValue(input[i]);
+    if (value < 0) {
+      return false;
+    }
+    buffer = (buffer << 6) | static_cast<uint32_t>(value);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      if (outLen >= maxLen) {
+        return false;
+      }
+      out[outLen++] = static_cast<uint8_t>((buffer >> bits) & 0xFF);
+    }
+  }
+  return true;
+}
+
+class CborJsonDecoder {
+ public:
+  CborJsonDecoder(const uint8_t* data, size_t len) : data_(data), len_(len) {}
+
+  bool decode(String& json)
+  {
+    pos_ = 0;
+    json = "";
+    return decodeValue(json) && pos_ == len_;
+  }
+
+ private:
+  bool readByte(uint8_t& value)
+  {
+    if (pos_ >= len_) return false;
+    value = data_[pos_++];
+    return true;
+  }
+
+  bool readUint(uint8_t ai, uint64_t& value)
+  {
+    if (ai < 24) {
+      value = ai;
+      return true;
+    }
+    uint8_t bytes = 0;
+    if (ai == 24) bytes = 1;
+    else if (ai == 25) bytes = 2;
+    else if (ai == 26) bytes = 4;
+    else if (ai == 27) bytes = 8;
+    else return false;
+    if (pos_ + bytes > len_) return false;
+    value = 0;
+    for (uint8_t i = 0; i < bytes; ++i) {
+      value = (value << 8) | data_[pos_++];
+    }
+    return true;
+  }
+
+  void appendJsonStringByte(String& out, uint8_t b)
+  {
+    if (b == '"' || b == '\\') {
+      out += '\\';
+      out += static_cast<char>(b);
+    } else if (b == '\n') {
+      out += "\\n";
+    } else if (b == '\r') {
+      out += "\\r";
+    } else if (b == '\t') {
+      out += "\\t";
+    } else if (b >= 0x20) {
+      out += static_cast<char>(b);
+    }
+  }
+
+  bool decodeText(String& out, uint64_t length)
+  {
+    if (pos_ + length > len_) return false;
+    out += '"';
+    for (uint64_t i = 0; i < length; ++i) {
+      appendJsonStringByte(out, data_[pos_++]);
+    }
+    out += '"';
+    return true;
+  }
+
+  bool decodeBytesAsHexString(String& out, uint64_t length)
+  {
+    if (pos_ + length > len_) return false;
+    out += '"';
+    for (uint64_t i = 0; i < length; ++i) {
+      appendHexByte(out, data_[pos_++]);
+    }
+    out += '"';
+    return true;
+  }
+
+  bool decodeValue(String& out)
+  {
+    uint8_t first = 0;
+    if (!readByte(first)) return false;
+    const uint8_t major = first >> 5;
+    const uint8_t ai = first & 0x1F;
+    uint64_t value = 0;
+    switch (major) {
+      case 0:
+        if (!readUint(ai, value)) return false;
+        out += String(static_cast<unsigned long long>(value));
+        return true;
+      case 1:
+        if (!readUint(ai, value)) return false;
+        out += '-';
+        out += String(static_cast<unsigned long long>(value + 1));
+        return true;
+      case 2:
+        if (!readUint(ai, value)) return false;
+        return decodeBytesAsHexString(out, value);
+      case 3:
+        if (!readUint(ai, value)) return false;
+        return decodeText(out, value);
+      case 4:
+        if (!readUint(ai, value)) return false;
+        out += '[';
+        for (uint64_t i = 0; i < value; ++i) {
+          if (i > 0) out += ',';
+          if (!decodeValue(out)) return false;
+        }
+        out += ']';
+        return true;
+      case 5:
+        if (!readUint(ai, value)) return false;
+        out += '{';
+        for (uint64_t i = 0; i < value; ++i) {
+          if (i > 0) out += ',';
+          if (!decodeValue(out)) return false;
+          out += ':';
+          if (!decodeValue(out)) return false;
+        }
+        out += '}';
+        return true;
+      case 7:
+        if (ai == 20) {
+          out += "false";
+          return true;
+        }
+        if (ai == 21) {
+          out += "true";
+          return true;
+        }
+        if (ai == 22 || ai == 23) {
+          out += "null";
+          return true;
+        }
+        return false;
+      default:
+        return false;
+    }
+  }
+
+  const uint8_t* data_;
+  size_t len_;
+  size_t pos_ = 0;
+};
+
+String decodePayloadEnvelope(const String& payload)
+{
+  if (!payload.startsWith("~")) {
+    return payload;
+  }
+  const String encoded = payload.substring(1);
+  const size_t maxLen = (encoded.length() * 3) / 4 + 3;
+  uint8_t* buffer = static_cast<uint8_t*>(malloc(maxLen));
+  if (!buffer) {
+    return "";
+  }
+  size_t decodedLen = 0;
+  String json;
+  if (decodeBase64Url(encoded, buffer, maxLen, decodedLen)) {
+    CborJsonDecoder decoder(buffer, decodedLen);
+    decoder.decode(json);
+  }
+  free(buffer);
+  return json;
+}
+
 String authBase(const String& payload)
 {
   static const char* keys[] = {
@@ -571,24 +769,31 @@ bool Manager::publishTelemetry()
 
 void Manager::handleMqttMessage(const String& topicName, const String& payload)
 {
+  const String decodedPayload = decodePayloadEnvelope(payload);
+  if (decodedPayload.length() == 0) {
+    if (config_.log) {
+      (*config_.log).println("RemoteDeviceManager rejected command: payload decode failed.");
+    }
+    return;
+  }
   if (topicName == topic("console/cmd")) {
-    if (!verifyIncomingAuth(payload)) return;
-    handleConsoleCommand(payload);
+    if (!verifyIncomingAuth(decodedPayload)) return;
+    handleConsoleCommand(decodedPayload);
   } else if (topicName == topic("fs/jobs")) {
-    if (!verifyIncomingAuth(payload)) return;
-    handleFileJob(payload);
+    if (!verifyIncomingAuth(decodedPayload)) return;
+    handleFileJob(decodedPayload);
   } else if (topicName == topic("fs/data")) {
-    if (!verifyIncomingAuth(payload)) return;
-    handleFileData(payload);
+    if (!verifyIncomingAuth(decodedPayload)) return;
+    handleFileData(decodedPayload);
   } else if (topicName == topic("ota/jobs")) {
-    if (!verifyIncomingAuth(payload)) return;
-    handleOtaJob(payload);
+    if (!verifyIncomingAuth(decodedPayload)) return;
+    handleOtaJob(decodedPayload);
   } else if (topicName == topic("rdm/alive/request")) {
-    if (!verifyIncomingAuth(payload)) return;
-    handleAliveRequest(payload);
+    if (!verifyIncomingAuth(decodedPayload)) return;
+    handleAliveRequest(decodedPayload);
   } else if (topicName == topic("rdm/transport/set")) {
-    if (!verifyIncomingAuth(payload)) return;
-    handleTransportSet(payload);
+    if (!verifyIncomingAuth(decodedPayload)) return;
+    handleTransportSet(decodedPayload);
   }
 }
 
