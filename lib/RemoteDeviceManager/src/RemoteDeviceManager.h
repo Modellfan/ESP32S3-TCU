@@ -72,6 +72,7 @@ struct Config {
   const char* mqttUser = "";
   const char* mqttPass = "";
   const char* mqttClientId = "eboxster";
+  const char* sharedSecret = "";
   const char* firmwareVersion = "dev";
   fs::FS* filesystem = nullptr;
   Client* httpClient = nullptr;
@@ -120,6 +121,7 @@ class Manager {
   void handleOtaJob(const String& payload);
   void handleAliveRequest(const String& payload);
   void handleTransportSet(const String& payload);
+  bool verifyIncomingAuth(const String& payload) const;
   bool publishAlive(const String& requestPayload = "");
   bool publishTransportState(const char* requestedMode, bool ok, const String& detail = "");
   void publishResult(const char* topicSuffix, const String& jobId, const char* op, const char* status,
@@ -138,8 +140,8 @@ class Manager {
   bool finishMqttPut(bool ok, const char* detail);
   bool publishFileAck(const String& jobId, uint32_t seq, const char* status, const char* detail = nullptr);
   bool deletePath(const String& jobId, const String& path);
-  bool otaUrl(const String& jobId, const String& url, uint32_t expectedCrc, size_t size);
-  bool httpDownloadToOta(const String& url, uint32_t expectedCrc, size_t size);
+  bool otaUrl(const String& jobId, const String& url, uint32_t expectedCrc, const String& expectedSha256, size_t size);
+  bool httpDownloadToOta(const String& url, uint32_t expectedCrc, const String& expectedSha256, size_t size);
   bool parseUrl(const String& url, String& host, uint16_t& port, String& path);
   String normalizePath(const String& path) const;
   bool pathAllowed(const String& path) const;

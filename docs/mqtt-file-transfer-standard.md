@@ -224,22 +224,33 @@ The device runs the configured GitHub latest-release OTA flow.
   "device_id": "eboxster",
   "job_id": "job-006",
   "op": "ota_url",
-  "url": "http://192.168.3.2:8080/files/job-006/firmware.bin",
+  "url": "http://192.168.3.2:8080/files/job-006/firmware.bin?exp=1785160000&sig=...",
   "size": 1048576,
-  "crc32": "89abcdef"
+  "crc32": "89abcdef",
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 ```
 
-The device downloads the firmware over HTTP, verifies CRC32, commits the OTA image, and
-reboots only after `Update.end(true)` succeeds.
+The device downloads the firmware over a time-limited signed URL, verifies CRC32
+and SHA-256, commits the OTA image, and reboots only after `Update.end(true)`
+succeeds.
 
 ## Security
 
 Minimum for field use:
 
-- MQTT authentication and per-device ACLs.
-- MQTT authentication and size limits for MQTT file transfer.
-- CRC32 for demo OTA and file jobs; use signed metadata or SHA-256 before production.
+- Run the RemoteDeviceManager WebUI/API on localhost only. Remote UI access must
+  stay disabled unless it is behind a trusted tunnel or VPN.
+- Protect the WebUI/API with HTTP Basic Auth.
+- Set `TCALL_RDM_SHARED_SECRET` on the device and `RDM_SHARED_SECRET` in the
+  Python tool. MQTT commands and file chunks are HMAC-SHA256 signed; the device
+  rejects missing or invalid signatures.
+- Use MQTT broker authentication and per-device ACLs when the broker is exposed
+  outside the local network.
+- Use MQTT size limits for MQTT file transfer.
+- For local OTA binaries, the Python tool publishes a signed, time-limited
+  artifact URL and includes both CRC32 and SHA-256. The device verifies both
+  before accepting the image.
 - Disable dangerous console commands in production deployments.
 
 ## Non-Goals

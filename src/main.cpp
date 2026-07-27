@@ -30,6 +30,7 @@ constexpr const char* MQTT_PASS = TCALL_MQTT_PASS;
 constexpr const char* MQTT_CLIENT_ID = TCALL_MQTT_CLIENT_ID;
 constexpr const char* MQTT_TOPIC_PREFIX = TCALL_MQTT_TOPIC_PREFIX;
 constexpr uint32_t MQTT_PUBLISH_INTERVAL_MS = TCALL_MQTT_PUBLISH_INTERVAL_MS;
+constexpr const char* RDM_SHARED_SECRET = TCALL_RDM_SHARED_SECRET;
 constexpr const char* FW_VERSION = TCALL_FW_VERSION;
 constexpr bool GPS_AUTOSTART = TCALL_GPS_AUTOSTART != 0;
 constexpr uint16_t WIFI_CONSOLE_PORT = 23;
@@ -1541,6 +1542,7 @@ void setupRemoteDeviceManager()
   config.mqttUser = MQTT_USER;
   config.mqttPass = MQTT_PASS;
   config.mqttClientId = MQTT_CLIENT_ID;
+  config.sharedSecret = RDM_SHARED_SECRET;
   config.firmwareVersion = FW_VERSION;
   config.filesystem = &SPIFFS;
   config.httpClient = &remoteHttpClient;

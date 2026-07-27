@@ -3,6 +3,9 @@
 #include <ctype.h>
 #include <string.h>
 
+#include <mbedtls/md.h>
+#include <mbedtls/sha256.h>
+
 namespace RemoteDeviceManager {
 namespace {
 
@@ -132,6 +135,67 @@ void appendHexByte(String& out, uint8_t value)
   static const char* digits = "0123456789abcdef";
   out += digits[(value >> 4) & 0x0F];
   out += digits[value & 0x0F];
+}
+
+String hexEncode(const uint8_t* data, size_t len)
+{
+  String out;
+  out.reserve(len * 2);
+  for (size_t i = 0; i < len; ++i) {
+    appendHexByte(out, data[i]);
+  }
+  return out;
+}
+
+bool constantTimeEquals(const String& left, const String& right)
+{
+  if (left.length() != right.length()) {
+    return false;
+  }
+  uint8_t diff = 0;
+  for (size_t i = 0; i < left.length(); ++i) {
+    diff |= static_cast<uint8_t>(left[i] ^ right[i]);
+  }
+  return diff == 0;
+}
+
+String authBase(const String& payload)
+{
+  static const char* keys[] = {
+      "schema", "device_id", "msg_id", "job_id", "op", "session_id", "command_id",
+      "request_id", "mode", "path", "size", "crc32", "sha256", "chunk_size",
+      "seq", "offset", "encoding", "data", "url", "compact",
+  };
+
+  String base;
+  for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+    const String value = jsonValue(payload, keys[i]);
+    if (value.length() == 0) {
+      continue;
+    }
+    base += keys[i];
+    base += '=';
+    base += value;
+    base += '\n';
+  }
+  return base;
+}
+
+String hmacSha256Hex(const char* secret, const String& payload)
+{
+  uint8_t digest[32];
+  const String base = authBase(payload);
+  const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!md) {
+    return "";
+  }
+  const int rc = mbedtls_md_hmac(md,
+                                 reinterpret_cast<const unsigned char*>(secret),
+                                 strlen(secret),
+                                 reinterpret_cast<const unsigned char*>(base.c_str()),
+                                 base.length(),
+                                 digest);
+  return rc == 0 ? hexEncode(digest, sizeof(digest)) : "";
 }
 
 }  // namespace
@@ -508,16 +572,22 @@ bool Manager::publishTelemetry()
 void Manager::handleMqttMessage(const String& topicName, const String& payload)
 {
   if (topicName == topic("console/cmd")) {
+    if (!verifyIncomingAuth(payload)) return;
     handleConsoleCommand(payload);
   } else if (topicName == topic("fs/jobs")) {
+    if (!verifyIncomingAuth(payload)) return;
     handleFileJob(payload);
   } else if (topicName == topic("fs/data")) {
+    if (!verifyIncomingAuth(payload)) return;
     handleFileData(payload);
   } else if (topicName == topic("ota/jobs")) {
+    if (!verifyIncomingAuth(payload)) return;
     handleOtaJob(payload);
   } else if (topicName == topic("rdm/alive/request")) {
+    if (!verifyIncomingAuth(payload)) return;
     handleAliveRequest(payload);
   } else if (topicName == topic("rdm/transport/set")) {
+    if (!verifyIncomingAuth(payload)) return;
     handleTransportSet(payload);
   }
 }
@@ -579,6 +649,29 @@ void Manager::subscribeTopics()
 void Manager::handleAliveRequest(const String& payload)
 {
   publishAlive(payload);
+}
+
+bool Manager::verifyIncomingAuth(const String& payload) const
+{
+  if (!hasText(config_.sharedSecret)) {
+    if (config_.log) {
+      (*config_.log).println("RemoteDeviceManager rejected command: TCALL_RDM_SHARED_SECRET is empty.");
+    }
+    return false;
+  }
+  const String received = jsonValue(payload, "auth");
+  if (received.length() != 64) {
+    if (config_.log) {
+      (*config_.log).println("RemoteDeviceManager rejected command: missing auth.");
+    }
+    return false;
+  }
+  const String expected = hmacSha256Hex(config_.sharedSecret, payload);
+  const bool ok = expected.length() == 64 && constantTimeEquals(received, expected);
+  if (!ok && config_.log) {
+    (*config_.log).println("RemoteDeviceManager rejected command: invalid auth.");
+  }
+  return ok;
 }
 
 void Manager::handleTransportSet(const String& payload)
@@ -772,6 +865,7 @@ void Manager::handleOtaJob(const String& payload)
     publishResult("ota/result", jobId, op.c_str(), ok ? "ok" : "failed", capture.text().c_str());
   } else if (op == "ota_url") {
     otaUrl(jobId, jsonValue(payload, "url"), parseHex32(jsonValue(payload, "crc32")),
+           jsonValue(payload, "sha256"),
            static_cast<size_t>(jsonValue(payload, "size").toInt()));
   } else {
     publishResult("ota/result", jobId, op.c_str(), "rejected", "unsupported_op");
@@ -1084,9 +1178,13 @@ bool Manager::deletePath(const String& jobId, const String& path)
   return ok;
 }
 
-bool Manager::otaUrl(const String& jobId, const String& url, uint32_t expectedCrc, size_t size)
+bool Manager::otaUrl(const String& jobId,
+                     const String& url,
+                     uint32_t expectedCrc,
+                     const String& expectedSha256,
+                     size_t size)
 {
-  const bool ok = httpDownloadToOta(url, expectedCrc, size);
+  const bool ok = httpDownloadToOta(url, expectedCrc, expectedSha256, size);
   publishResult("ota/result", jobId, "ota_url", ok ? "ok" : "failed", ok ? nullptr : "ota_failed");
   if (ok) {
     delay(1000);
@@ -1095,9 +1193,12 @@ bool Manager::otaUrl(const String& jobId, const String& url, uint32_t expectedCr
   return ok;
 }
 
-bool Manager::httpDownloadToOta(const String& url, uint32_t expectedCrc, size_t size)
+bool Manager::httpDownloadToOta(const String& url,
+                                uint32_t expectedCrc,
+                                const String& expectedSha256,
+                                size_t size)
 {
-  if (!config_.httpClient || expectedCrc == 0) {
+  if (!config_.httpClient || expectedCrc == 0 || expectedSha256.length() != 64) {
     return false;
   }
   String host;
@@ -1136,6 +1237,9 @@ bool Manager::httpDownloadToOta(const String& url, uint32_t expectedCrc, size_t 
   }
   uint8_t buffer[HTTP_BUFFER_SIZE];
   uint32_t crc = 0;
+  mbedtls_sha256_context sha;
+  mbedtls_sha256_init(&sha);
+  mbedtls_sha256_starts(&sha, 0);
   size_t written = 0;
   uint32_t last = millis();
   while ((client.connected() || client.available()) && millis() - last < HTTP_TIMEOUT_MS) {
@@ -1146,9 +1250,11 @@ bool Manager::httpDownloadToOta(const String& url, uint32_t expectedCrc, size_t 
     }
     if (got > 0) {
       crc = crc32Update(crc, buffer, got);
+      mbedtls_sha256_update(&sha, buffer, got);
       if (Update.write(buffer, got) != got) {
         Update.abort();
         client.stop();
+        mbedtls_sha256_free(&sha);
         return false;
       }
       written += got;
@@ -1157,7 +1263,13 @@ bool Manager::httpDownloadToOta(const String& url, uint32_t expectedCrc, size_t 
     delay(1);
   }
   client.stop();
-  if ((contentLength > 0 && written != static_cast<size_t>(contentLength)) || crc != expectedCrc) {
+  uint8_t shaDigest[32];
+  mbedtls_sha256_finish(&sha, shaDigest);
+  mbedtls_sha256_free(&sha);
+  const String actualSha256 = hexEncode(shaDigest, sizeof(shaDigest));
+  if ((contentLength > 0 && written != static_cast<size_t>(contentLength)) ||
+      crc != expectedCrc ||
+      !constantTimeEquals(actualSha256, expectedSha256)) {
     Update.abort();
     return false;
   }

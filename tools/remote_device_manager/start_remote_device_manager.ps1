@@ -10,7 +10,10 @@ param(
     [string]$PublicHttpUrl = "",
     [string]$LocalMqttHost = "",
     [string]$PublicMqttHost = "",
-    [int]$PublicMqttPort = 0
+    [int]$PublicMqttPort = 0,
+    [string]$WebUser = "admin",
+    [string]$WebPassword = $env:RDM_WEB_PASSWORD,
+    [string]$SharedSecret = $env:RDM_SHARED_SECRET
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,4 +51,7 @@ python tools\remote_device_manager\server.py `
     --local-mqtt-host $LocalMqttHost `
     --public-mqtt-host $PublicMqttHost `
     --public-mqtt-port $PublicMqttPort `
+    --web-user $WebUser `
+    --web-password $WebPassword `
+    --shared-secret $SharedSecret `
     --open

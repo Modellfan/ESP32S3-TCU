@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import select
 import socket
 import struct
@@ -155,6 +159,56 @@ def parse_publish(flags: int, payload: bytes) -> tuple[str, str, bool]:
     return topic, text, bool(flags & 1)
 
 
+AUTH_FIELDS = (
+    "schema", "device_id", "msg_id", "job_id", "op", "session_id", "command_id",
+    "request_id", "mode", "path", "size", "crc32", "sha256", "chunk_size",
+    "seq", "offset", "encoding", "data", "url", "compact",
+)
+
+
+def auth_base(payload: dict) -> bytes:
+    lines: list[str] = []
+    for key in AUTH_FIELDS:
+        if key not in payload or payload[key] is None:
+            continue
+        value = payload[key]
+        if isinstance(value, bool):
+            text = "true" if value else "false"
+        else:
+            text = str(value)
+        if text == "":
+            continue
+        lines.append(f"{key}={text}\n")
+    return "".join(lines).encode("utf-8")
+
+
+def sign_payload(payload: dict, secret: str) -> dict:
+    if not secret:
+        return payload
+    payload["auth"] = hmac.new(secret.encode("utf-8"), auth_base(payload), hashlib.sha256).hexdigest()
+    return payload
+
+
+def sign_artifact_path(path: str, exp: int, secret: str) -> str:
+    base = f"GET\n{path}\n{exp}\n".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest()
+
+
+def signed_artifact_url(base_url: str, path: str, secret: str, ttl_seconds: int) -> str:
+    exp = int(time.time()) + max(30, ttl_seconds)
+    sig = sign_artifact_path(path, exp, secret)
+    return f"{base_url.rstrip('/')}{path}?exp={exp}&sig={sig}"
+
+
+def is_loopback_client(client_address: object) -> bool:
+    host = client_address[0] if isinstance(client_address, tuple) and client_address else ""
+    try:
+        ip = socket.getaddrinfo(host, None, flags=socket.AI_NUMERICHOST)[0][4][0]
+    except OSError:
+        ip = str(host)
+    return ip in ("127.0.0.1", "::1") or ip.startswith("127.") or ip.startswith("::ffff:127.")
+
+
 class MqttClient:
     def __init__(self, host: str, port: int, client_id: str, username: str | None, password: str | None):
         self.host = host
@@ -247,12 +301,16 @@ class AppState:
         payload.setdefault("msg_id", f"msg-{uuid.uuid4().hex[:12]}")
         payload.setdefault("job_id", f"job-{uuid.uuid4().hex[:12]}")
         payload.setdefault("created_at", dt.datetime.now(dt.UTC).isoformat())
+        sign_payload(payload, self.args.shared_secret)
         encoded = json.dumps(payload, separators=(",", ":"))
         self.mqtt.publish(self.topic(suffix), encoded)
         self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
         return payload
 
     def publish_control(self, suffix: str, payload: dict) -> dict:
+        payload.setdefault("schema", "rdm-1")
+        payload.setdefault("device_id", self.args.device)
+        sign_payload(payload, self.args.shared_secret)
         encoded = json.dumps(payload, separators=(",", ":"))
         self.mqtt.publish(self.topic(suffix), encoded)
         self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
@@ -395,6 +453,7 @@ class AppState:
                 "encoding": "hex",
                 "data": chunk.hex(),
             }
+            sign_payload(payload, self.args.shared_secret)
             encoded = json.dumps(payload, separators=(",", ":"))
             self.mqtt.publish(self.topic("fs/data"), encoded)
             self.add_transfer(self.infer_link(), "mqtt", "down", len(encoded.encode("utf-8")))
@@ -1038,6 +1097,43 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         return
 
+    def _http_allowed(self) -> bool:
+        return bool(self.state.args.allow_remote_ui) or is_loopback_client(self.client_address)
+
+    def _authenticated(self) -> bool:
+        expected = "Basic " + base64.b64encode(
+            f"{self.state.args.web_user}:{self.state.args.web_password}".encode("utf-8")
+        ).decode("ascii")
+        return hmac.compare_digest(self.headers.get("Authorization", ""), expected)
+
+    def _guard(self) -> bool:
+        if not self._http_allowed():
+            self._send(403, b"RemoteDeviceManager WebUI is local-only.\n", "text/plain; charset=utf-8")
+            return False
+        if not self._authenticated():
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="RemoteDeviceManager"')
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Authentication required.\n")
+            return False
+        return True
+
+    def _artifact_allowed(self, path: str, query: dict[str, list[str]]) -> bool:
+        try:
+            exp = int(query.get("exp", ["0"])[0])
+        except (TypeError, ValueError):
+            exp = 0
+        sig = query.get("sig", [""])[0]
+        if exp < int(time.time()) or len(sig) != 64:
+            self._json({"error": "artifact_token_expired_or_missing"}, 403)
+            return False
+        expected = sign_artifact_path(path, exp, self.state.args.shared_secret)
+        if not hmac.compare_digest(sig, expected):
+            self._json({"error": "artifact_token_invalid"}, 403)
+            return False
+        return True
+
     def _send(self, code: int, data: bytes, content_type: str = "application/json") -> None:
         self.send_response(code)
         self.send_header("Content-Type", content_type)
@@ -1053,6 +1149,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        if parsed.path.startswith("/files/"):
+            if not self._artifact_allowed(parsed.path, query):
+                return
+            file_path = self.state.hosted / parsed.path.removeprefix("/files/")
+            if not file_path.is_file() or self.state.hosted not in file_path.resolve().parents:
+                self._json({"error": "not_found"}, 404)
+                return
+            self._send(200, file_path.read_bytes(), "application/octet-stream")
+            return
+        if not self._guard():
+            return
         if parsed.path == "/":
             self._send(200, HTML.encode(), "text/html; charset=utf-8")
             return
@@ -1084,17 +1192,11 @@ class Handler(BaseHTTPRequestHandler):
             content_type = "image/svg+xml" if file_path.suffix == ".svg" else "application/octet-stream"
             self._send(200, file_path.read_bytes(), content_type)
             return
-        if parsed.path.startswith("/files/"):
-            file_path = self.state.hosted / parsed.path.removeprefix("/files/")
-            if not file_path.is_file() or self.state.hosted not in file_path.resolve().parents:
-                self._json({"error": "not_found"}, 404)
-                return
-            data = file_path.read_bytes()
-            self._send(200, data, "application/octet-stream")
-            return
         self._json({"error": "not_found"}, 404)
 
     def do_PUT(self) -> None:
+        if not self._guard():
+            return
         parsed = urllib.parse.urlparse(self.path)
         if not parsed.path.startswith("/uploads/"):
             self._json({"error": "not_found"}, 404)
@@ -1106,6 +1208,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": True, "path": str(target)})
 
     def do_POST(self) -> None:
+        if not self._guard():
+            return
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query)
         if parsed.path == "/api/console":
@@ -1158,14 +1262,21 @@ class Handler(BaseHTTPRequestHandler):
             data = self._body()
             target.write_bytes(data)
             crc = zlib.crc32(data) & 0xFFFFFFFF
+            sha256 = hashlib.sha256(data).hexdigest()
             self.state.publish_job("ota/jobs", {
                 "job_id": job_id,
                 "op": "ota_url",
-                "url": f"{self.state.args.public_base_url.rstrip('/')}/files/{job_id}/{name}",
+                "url": signed_artifact_url(
+                    self.state.args.public_base_url,
+                    f"/files/{job_id}/{name}",
+                    self.state.args.shared_secret,
+                    self.state.args.artifact_token_ttl,
+                ),
                 "size": len(data),
                 "crc32": f"{crc:08x}",
+                "sha256": sha256,
             })
-            self._json({"ok": True, "job_id": job_id, "crc32": f"{crc:08x}"})
+            self._json({"ok": True, "job_id": job_id, "crc32": f"{crc:08x}", "sha256": sha256})
         elif parsed.path == "/api/device/alive":
             data = json.loads(self._body() or b"{}")
             request_id = str(data.get("request_id", f"a{uuid.uuid4().hex[:8]}"))
@@ -1244,6 +1355,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-mqtt-host", default="")
     parser.add_argument("--public-mqtt-host", default="")
     parser.add_argument("--public-mqtt-port", type=int, default=0)
+    parser.add_argument("--web-user", default=os.environ.get("RDM_WEB_USER", "admin"))
+    parser.add_argument("--web-password", default=os.environ.get("RDM_WEB_PASSWORD", ""))
+    parser.add_argument("--allow-remote-ui", action="store_true")
+    parser.add_argument("--shared-secret", default=os.environ.get("RDM_SHARED_SECRET", ""))
+    parser.add_argument("--allow-insecure-mqtt", action="store_true")
+    parser.add_argument("--artifact-token-ttl", type=int, default=900)
     parser.add_argument("--mqtt-file-max-bytes", type=int, default=16384)
     parser.add_argument("--mqtt-file-chunk-bytes", type=int, default=384)
     parser.add_argument("--mqtt-file-max-chunk-bytes", type=int, default=384)
@@ -1261,6 +1378,13 @@ def parse_args() -> argparse.Namespace:
         args.public_mqtt_port = args.http_port if args.public_mqtt_host else args.mqtt_port
     if not args.public_http_url and duckdns_host:
         args.public_http_url = f"http://{duckdns_host}:{args.http_port}"
+    if not args.web_password:
+        args.web_password = secrets.token_urlsafe(18)
+        args.generated_web_password = True
+    else:
+        args.generated_web_password = False
+    if not args.shared_secret and not args.allow_insecure_mqtt:
+        parser.error("set --shared-secret or RDM_SHARED_SECRET; use --allow-insecure-mqtt only for isolated development")
     return args
 
 
@@ -1282,6 +1406,10 @@ def main() -> int:
     server.mqtt_upstream_port = args.mqtt_port
     url = f"http://127.0.0.1:{args.http_port}/"
     print(f"RemoteDeviceManager WebUI: {url}")
+    print(f"RemoteDeviceManager WebUI user: {args.web_user}")
+    if args.generated_web_password:
+        print(f"RemoteDeviceManager generated WebUI password: {args.web_password}")
+    print(f"RemoteDeviceManager WebUI scope: {'remote allowed' if args.allow_remote_ui else 'local-only'}")
     print(f"Device HTTP base URL: {args.public_base_url}")
     print(f"Public MQTT endpoint: {args.public_mqtt_host}:{args.public_mqtt_port} -> {args.mqtt_host}:{args.mqtt_port}")
     if args.open:
