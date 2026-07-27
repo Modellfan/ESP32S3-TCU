@@ -8,6 +8,26 @@ constexpr float KNOTS_TO_METERS_PER_SECOND = 0.514444F;
 constexpr uint32_t FIRST_COLD_START_AFTER_MS = 10UL * 60UL * 1000UL;
 constexpr uint32_t COLD_START_RETRY_MS = 15UL * 60UL * 1000UL;
 
+double nmeaDegreesToDecimal(double value)
+{
+  const double sign = value < 0 ? -1.0 : 1.0;
+  const double absValue = fabs(value);
+  const double degrees = floor(absValue / 100.0);
+  const double minutes = absValue - degrees * 100.0;
+  if (degrees < 0 || minutes < 0 || minutes >= 60.0) {
+    return value;
+  }
+  return sign * (degrees + minutes / 60.0);
+}
+
+double coordinateToDecimalDegrees(double value, double maxDecimalDegrees)
+{
+  if (fabs(value) <= maxDecimalDegrees) {
+    return value;
+  }
+  return nmeaDegreesToDecimal(value);
+}
+
 bool validUtc(const tcall::BufferedGpsTime& time)
 {
   return time.year >= 2020 && time.month >= 1 && time.month <= 12 &&
@@ -172,8 +192,8 @@ void GpsBufferedService::cacheGpsInfo(const GPSInfo& info)
   time_.valid = validUtc(time_);
 
   gps_.fixMode = info.isFix;
-  gps_.latitude = info.latitude;
-  gps_.longitude = info.longitude;
+  gps_.latitude = coordinateToDecimalDegrees(info.latitude, 90.0);
+  gps_.longitude = coordinateToDecimalDegrees(info.longitude, 180.0);
   gps_.ns = info.NS_indicator;
   gps_.ew = info.EW_indicator;
   gps_.altitudeMeters = info.altitude;

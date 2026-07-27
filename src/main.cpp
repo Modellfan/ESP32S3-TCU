@@ -1283,6 +1283,7 @@ void handleGpsCommand(String args, Stream& out)
 
     if (!modemService.enableGps(out)) {
       out.println("GPS PROOF FAIL reason=gnss_enable_failed");
+      gpsBuffer.begin();
       return;
     }
 
@@ -1299,6 +1300,7 @@ void handleGpsCommand(String args, Stream& out)
         printProofSample(elapsedSeconds, info, raw, out);
         if (proofPasses(info)) {
           out.println("GPS PROOF PASS");
+          gpsBuffer.begin();
           return;
         }
       } else {
@@ -1317,6 +1319,7 @@ void handleGpsCommand(String args, Stream& out)
     }
 
     out.println("GPS PROOF FAIL reason=timeout_no_real_fix");
+    gpsBuffer.begin();
     return;
   }
   if (action == "hot") {
